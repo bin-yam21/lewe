@@ -41,10 +41,9 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
           borderColor,
           backgroundColor: theme.colors.surface,
           borderRadius: theme.radius.md,
-          // A second ring on focus reads as attention without shifting layout.
-          ...(focused && !error
-            ? { shadowColor: theme.colors.accent, shadowOpacity: 0.18, shadowRadius: 6 }
-            : null),
+          // Focus is signalled by border color alone. Adding/removing shadow
+          // props here changed the native view's style on every focus change,
+          // which can bounce focus back out of the field on Android.
         }}
       >
         <TextInput

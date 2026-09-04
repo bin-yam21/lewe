@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { ApiError } from '@/api/client';
 import { Button } from '@/components/Button';
@@ -55,12 +55,8 @@ export default function Register() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <Screen scroll contentStyle={{ flexGrow: 1 }}>
-        <Stack gap={7}>
+    <Screen scroll grow>
+      <Stack gap={7}>
           <Pressable onPress={() => router.back()} hitSlop={12} style={{ alignSelf: 'flex-start' }}>
             <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
           </Pressable>
@@ -150,9 +146,8 @@ export default function Register() {
                 Sign in
               </Text>
             </Link>
-          </Row>
-        </Stack>
-      </Screen>
-    </KeyboardAvoidingView>
+        </Row>
+      </Stack>
+    </Screen>
   );
 }

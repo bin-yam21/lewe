@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api/client';
@@ -48,6 +48,16 @@ export default function CreateListing() {
 
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
+
+  const contentStyle = useMemo(
+    () => ({
+      padding: theme.space[5],
+      paddingTop: insets.top + theme.space[4],
+      paddingBottom: theme.space[9],
+      gap: theme.space[6],
+    }),
+    [theme.space, insets.top],
+  );
 
   const detailsValid =
     title.trim().length > 0 && description.trim().length > 0 && !!category;
@@ -108,18 +118,13 @@ export default function CreateListing() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <ScrollView
-        contentContainerStyle={{
-          padding: theme.space[5],
-          paddingTop: insets.top + theme.space[4],
-          paddingBottom: theme.space[9],
-          gap: theme.space[6],
-        }}
+        // Memoised: a fresh style object each keystroke re-lays out the
+        // ScrollView and can steal focus from the input being typed into.
+        contentContainerStyle={contentStyle}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         showsVerticalScrollIndicator={false}
       >
         <Stack gap={4}>
@@ -356,7 +361,7 @@ export default function CreateListing() {
           </Stack>
         ) : null}
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

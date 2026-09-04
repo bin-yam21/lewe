@@ -39,16 +39,24 @@ export default function Feed() {
 
   const firstName = user?.full_name?.split(' ')[0] ?? 'there';
 
+  const listContentStyle = useMemo(
+    () => ({
+      padding: theme.space[5],
+      paddingBottom: theme.space[9],
+      gap: theme.space[3],
+    }),
+    [theme.space],
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bgSubtle, paddingTop: insets.top }}>
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{
-          padding: theme.space[5],
-          paddingBottom: theme.space[9],
-          gap: theme.space[3],
-        }}
+        // Memoised: the search box lives in this list's header, so a new style
+        // object per keystroke would re-lay out the list under the input.
+        contentContainerStyle={listContentStyle}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         refreshing={query.isRefetching && !query.isFetchingNextPage}
         onRefresh={() => query.refetch()}
