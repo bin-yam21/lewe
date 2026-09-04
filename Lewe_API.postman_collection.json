@@ -1,0 +1,1141 @@
+{
+	"info": {
+		"_postman_id": "lewe-barter-api",
+		"name": "Lewe Barter API",
+		"description": "Complete API collection for the Lewe barter/exchange marketplace.\n\n**Setup:**\n1. Register a user → tokens are auto-saved\n2. Create items with wants\n3. Register a second user (update email/password) → tokens saved to User B vars\n4. Create items for User B\n5. Find matches, respond, complete, rate\n\n**Variables:**\n- `base_url` — API base (default: http://localhost:8080)\n- `access_token` / `refresh_token` — auto-set on register/login/refresh\n- `user_b_access_token` — manually set after registering second user",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "refresh_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "user_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "user_b_access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "user_b_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "item_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "item_b_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "match_id",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Health",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						},
+						"description": "Verify the server is running."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Register (User A)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('access_token', json.access_token);",
+									"    pm.collectionVariables.set('refresh_token', json.refresh_token);",
+									"    pm.collectionVariables.set('user_id', json.user.id);",
+									"    pm.test('User registered successfully', function() {",
+									"        pm.expect(json.user.email).to.eql('alice@example.com');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"alice@example.com\",\n    \"password\": \"password123\",\n    \"full_name\": \"Alice Johnson\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/register",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "register"]
+						},
+						"description": "Register User A. Tokens are auto-saved to collection variables."
+					},
+					"response": []
+				},
+				{
+					"name": "Register (User B)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('user_b_access_token', json.access_token);",
+									"    pm.collectionVariables.set('user_b_id', json.user.id);",
+									"    pm.test('User B registered successfully', function() {",
+									"        pm.expect(json.user.email).to.eql('bob@example.com');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"bob@example.com\",\n    \"password\": \"password456\",\n    \"full_name\": \"Bob Smith\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/register",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "register"]
+						},
+						"description": "Register User B. Token is saved to `user_b_access_token`."
+					},
+					"response": []
+				},
+				{
+					"name": "Login (User A)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('access_token', json.access_token);",
+									"    pm.collectionVariables.set('refresh_token', json.refresh_token);",
+									"    pm.collectionVariables.set('user_id', json.user.id);",
+									"    pm.test('Login successful', function() {",
+									"        pm.expect(json.access_token).to.be.a('string');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"alice@example.com\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "login"]
+						},
+						"description": "Login as User A. Tokens are auto-saved."
+					},
+					"response": []
+				},
+				{
+					"name": "Login (User B)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('user_b_access_token', json.access_token);",
+									"    pm.collectionVariables.set('user_b_id', json.user.id);",
+									"    pm.test('User B login successful', function() {",
+									"        pm.expect(json.access_token).to.be.a('string');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"bob@example.com\",\n    \"password\": \"password456\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "login"]
+						},
+						"description": "Login as User B. Token saved to `user_b_access_token`."
+					},
+					"response": []
+				},
+				{
+					"name": "Refresh Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('access_token', json.access_token);",
+									"    pm.collectionVariables.set('refresh_token', json.refresh_token);",
+									"    pm.test('Token refreshed', function() {",
+									"        pm.expect(json.access_token).to.be.a('string');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"refresh_token\": \"{{refresh_token}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/refresh",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "refresh"]
+						},
+						"description": "Exchange refresh token for new token pair. Old refresh token is revoked (rotation)."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Users",
+			"item": [
+				{
+					"name": "Get My Profile",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/users/me",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "users", "me"]
+						},
+						"description": "Get the authenticated user's profile."
+					},
+					"response": []
+				},
+				{
+					"name": "Update My Profile",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"full_name\": \"Alice Johnson\",\n    \"phone\": \"+1234567890\",\n    \"location\": \"Addis Ababa, Ethiopia\",\n    \"bio\": \"Love trading vintage items!\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/users/me",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "users", "me"]
+						},
+						"description": "Update the authenticated user's profile fields."
+					},
+					"response": []
+				},
+				{
+					"name": "Get User Rating",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/users/{{user_id}}/rating",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "users", "{{user_id}}", "rating"]
+						},
+						"description": "Get aggregate rating (average score + count) for any user. Public endpoint."
+					},
+					"response": []
+				},
+				{
+					"name": "Get User B Rating",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/users/{{user_b_id}}/rating",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "users", "{{user_b_id}}", "rating"]
+						},
+						"description": "Get aggregate rating for User B."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Items",
+			"item": [
+				{
+					"name": "Create Item (User A — Electronics)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('item_id', json.id);",
+									"    pm.test('Item created', function() {",
+									"        pm.expect(json.title).to.eql('iPhone 14 Pro');",
+									"        pm.expect(json.wants).to.have.length.above(0);",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"iPhone 14 Pro\",\n    \"description\": \"128GB, Space Black, excellent condition. Comes with original box and charger.\",\n    \"category\": \"electronics\",\n    \"condition\": \"like_new\",\n    \"exchange_method\": \"either\",\n    \"images\": [],\n    \"location\": \"Addis Ababa\",\n    \"wants\": [\n        {\n            \"category\": \"electronics\",\n            \"description\": \"Looking for a MacBook or iPad\"\n        },\n        {\n            \"category\": \"cameras\",\n            \"description\": \"Would also trade for a mirrorless camera\"\n        }\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/items",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"]
+						},
+						"description": "Create an electronics item for User A. Wants electronics or cameras in return. Item ID is auto-saved."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Item (User B — Electronics)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var json = pm.response.json();",
+									"    pm.collectionVariables.set('item_b_id', json.id);",
+									"    pm.test('Item B created', function() {",
+									"        pm.expect(json.title).to.eql('MacBook Air M2');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{user_b_access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"MacBook Air M2\",\n    \"description\": \"2023 model, 8GB RAM, 256GB SSD. Minor scratch on bottom case.\",\n    \"category\": \"electronics\",\n    \"condition\": \"good\",\n    \"exchange_method\": \"in_person\",\n    \"images\": [],\n    \"location\": \"Addis Ababa\",\n    \"wants\": [\n        {\n            \"category\": \"electronics\",\n            \"description\": \"Looking for a recent iPhone or Samsung phone\"\n        }\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/items",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"]
+						},
+						"description": "Create an electronics item for User B. Wants electronics in return → this creates a bidirectional match with User A's iPhone."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Item by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/items/{{item_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items", "{{item_id}}"]
+						},
+						"description": "Get a single item by ID. Public endpoint."
+					},
+					"response": []
+				},
+				{
+					"name": "List All Items",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/items?page=1&per_page=20",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "per_page",
+									"value": "20"
+								}
+							]
+						},
+						"description": "List all active items (paginated). Public endpoint."
+					},
+					"response": []
+				},
+				{
+					"name": "List Items — Filter by Category",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/items?category=electronics&page=1&per_page=20",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"],
+							"query": [
+								{
+									"key": "category",
+									"value": "electronics"
+								},
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "per_page",
+									"value": "20"
+								}
+							]
+						},
+						"description": "Filter items by category."
+					},
+					"response": []
+				},
+				{
+					"name": "List Items — Search",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/items?q=macbook&page=1&per_page=20",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"],
+							"query": [
+								{
+									"key": "q",
+									"value": "macbook"
+								},
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "per_page",
+									"value": "20"
+								}
+							]
+						},
+						"description": "Search items by title/description (ILIKE)."
+					},
+					"response": []
+				},
+				{
+					"name": "List My Items",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/users/me/items?page=1&per_page=20",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "users", "me", "items"],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "per_page",
+									"value": "20"
+								}
+							]
+						},
+						"description": "List the authenticated user's items."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Item",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"iPhone 14 Pro — Updated\",\n    \"description\": \"128GB, Space Black, excellent condition. Comes with original box, charger, and a case.\",\n    \"condition\": \"like_new\",\n    \"wants\": [\n        {\n            \"category\": \"electronics\",\n            \"description\": \"Looking for a MacBook or iPad\"\n        },\n        {\n            \"category\": \"cameras\",\n            \"description\": \"Mirrorless camera (Sony, Fuji)\"\n        },\n        {\n            \"category\": \"gaming\",\n            \"description\": \"Nintendo Switch or PS5\"\n        }\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/items/{{item_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items", "{{item_id}}"]
+						},
+						"description": "Partially update an item. Only provided fields are changed. Wants are fully replaced if provided."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete (Archive) Item",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/items/{{item_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items", "{{item_id}}"]
+						},
+						"description": "Soft-delete (archive) an item. Only the owner can delete. ⚠️ Run this AFTER testing matching, or re-create the item."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Matching",
+			"item": [
+				{
+					"name": "Find Matches for Item (User A)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var json = pm.response.json();",
+									"    if (json.matches && json.matches.length > 0) {",
+									"        pm.collectionVariables.set('match_id', json.matches[0].id);",
+									"        pm.test('Matches found', function() {",
+									"            pm.expect(json.count).to.be.above(0);",
+									"        });",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/items/{{item_id}}/matches",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items", "{{item_id}}", "matches"]
+						},
+						"description": "Discover and create matches for User A's item. If User B's item exists with bidirectional want overlap, a match will be created. Match ID is auto-saved."
+					},
+					"response": []
+				},
+				{
+					"name": "List My Matches (User A)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches"]
+						},
+						"description": "List all matches where User A is a participant."
+					},
+					"response": []
+				},
+				{
+					"name": "List My Matches (User B)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{user_b_access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches"]
+						},
+						"description": "List all matches where User B is a participant."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Match Details",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}"]
+						},
+						"description": "Get full details for a specific match, including both item summaries."
+					},
+					"response": []
+				},
+				{
+					"name": "Accept Match (User A)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"accept\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/respond",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "respond"]
+						},
+						"description": "User A accepts the match. Status moves from `pending` → `accepted_a`."
+					},
+					"response": []
+				},
+				{
+					"name": "Accept Match (User B)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{user_b_access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"accept\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/respond",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "respond"]
+						},
+						"description": "User B accepts the match. Both accepted → status moves to `confirmed`. Items marked as `matched`."
+					},
+					"response": []
+				},
+				{
+					"name": "Decline Match",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"accept\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/respond",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "respond"]
+						},
+						"description": "Decline a match → status moves to `cancelled`. ⚠️ Don't run this if testing the full accept→complete flow."
+					},
+					"response": []
+				},
+				{
+					"name": "Complete Match (User A confirms)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/complete",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "complete"]
+						},
+						"description": "User A confirms the exchange happened. Sets `confirmed_a = true`. Match stays `confirmed` until both sides confirm."
+					},
+					"response": []
+				},
+				{
+					"name": "Complete Match (User B confirms)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{user_b_access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/complete",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "complete"]
+						},
+						"description": "User B confirms the exchange happened. Both confirmed → status moves to `completed`. Items marked as `exchanged`."
+					},
+					"response": []
+				},
+				{
+					"name": "Cancel Match",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/cancel",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "cancel"]
+						},
+						"description": "Cancel a match. Either participant can cancel from any non-terminal state. Items restored to `active`."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Ratings",
+			"item": [
+				{
+					"name": "Rate Exchange (User A rates User B)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"score\": 5,\n    \"comment\": \"Great trade! Bob's MacBook was exactly as described. Fast and friendly.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/rate",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "rate"]
+						},
+						"description": "User A rates User B after a completed exchange. Score must be 1–5. Match must be in `completed` status."
+					},
+					"response": []
+				},
+				{
+					"name": "Rate Exchange (User B rates User A)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{user_b_access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"score\": 4,\n    \"comment\": \"Good exchange. iPhone was in great shape. Alice was responsive.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/rate",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "rate"]
+						},
+						"description": "User B rates User A after a completed exchange."
+					},
+					"response": []
+				},
+				{
+					"name": "Get User A Rating",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/users/{{user_id}}/rating",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "users", "{{user_id}}", "rating"]
+						},
+						"description": "Get User A's aggregate rating (average + count)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get User B Rating",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/users/{{user_b_id}}/rating",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "users", "{{user_b_id}}", "rating"]
+						},
+						"description": "Get User B's aggregate rating (average + count)."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Error Cases",
+			"item": [
+				{
+					"name": "Register — Missing Fields",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"bad\",\n    \"password\": \"short\",\n    \"full_name\": \"\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/register",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "register"]
+						},
+						"description": "Should return 422 with per-field validation errors."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Item — No Auth",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Test\",\n    \"description\": \"Test\",\n    \"category\": \"test\",\n    \"condition\": \"new\",\n    \"wants\": [{\"category\": \"test\"}]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/items",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"]
+						},
+						"description": "Should return 401 — missing Authorization header."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Item — Invalid Condition",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Test Item\",\n    \"description\": \"Test description\",\n    \"category\": \"test\",\n    \"condition\": \"broken\",\n    \"wants\": [{\"category\": \"test\"}]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/items",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"]
+						},
+						"description": "Should return 422 — 'broken' is not a valid condition."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Item — No Wants",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Test Item\",\n    \"description\": \"Test description\",\n    \"category\": \"test\",\n    \"condition\": \"new\",\n    \"wants\": []\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/items",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items"]
+						},
+						"description": "Should return 422 — at least one want is required."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Item — Not Owner",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{user_b_access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Hacked Title\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/items/{{item_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "items", "{{item_id}}"]
+						},
+						"description": "User B trying to update User A's item. Should return 403."
+					},
+					"response": []
+				},
+				{
+					"name": "Rate — Match Not Completed",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"score\": 5,\n    \"comment\": \"Trying to rate early\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/rate",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "rate"]
+						},
+						"description": "Should return 409 if match is not yet completed."
+					},
+					"response": []
+				},
+				{
+					"name": "Rate — Invalid Score",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"score\": 10,\n    \"comment\": \"Invalid score\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/matches/{{match_id}}/rate",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "matches", "{{match_id}}", "rate"]
+						},
+						"description": "Should return 422 — score must be 1–5."
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

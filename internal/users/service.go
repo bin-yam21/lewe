@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid email or password")
+	ErrInvalidCredentials  = errors.New("invalid email or password")
 	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 )
 

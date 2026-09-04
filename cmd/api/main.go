@@ -11,6 +11,9 @@ import (
 
 	"github.com/yeabt/lewe/internal/config"
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/items"
+	"github.com/yeabt/lewe/internal/matching"
+	"github.com/yeabt/lewe/internal/ratings"
 	"github.com/yeabt/lewe/internal/router"
 	"github.com/yeabt/lewe/internal/users"
 )
@@ -27,13 +30,30 @@ func main() {
 	defer pool.Close()
 
 	// Wire up dependencies: repo → service → handler
+
+	// Users domain
 	userRepo := users.NewRepository(pool)
 	tokenRepo := users.NewRefreshTokenRepository(pool)
 	userSvc := users.NewService(userRepo, tokenRepo, cfg.JWTSecret)
 	userHandler := users.NewHandler(userSvc)
 
+	// Items domain
+	itemRepo := items.NewRepository(pool)
+	itemSvc := items.NewService(itemRepo)
+	itemHandler := items.NewHandler(itemSvc)
+
+	// Matching domain
+	matchRepo := matching.NewRepository(pool)
+	matchSvc := matching.NewService(matchRepo, itemRepo)
+	matchHandler := matching.NewHandler(matchSvc)
+
+	// Ratings domain
+	ratingRepo := ratings.NewRepository(pool)
+	ratingSvc := ratings.NewService(ratingRepo, matchSvc)
+	ratingHandler := ratings.NewHandler(ratingSvc)
+
 	// Build router
-	r := router.New(userHandler, cfg.JWTSecret)
+	r := router.New(userHandler, itemHandler, matchHandler, ratingHandler, cfg.JWTSecret)
 
 	// Configure HTTP server
 	srv := &http.Server{
