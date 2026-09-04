@@ -1,4 +1,4 @@
-import { forwardRef, useState } from 'react';
+import { useState, type Ref } from 'react';
 import { TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
 
 import { useTheme } from '@/theme';
@@ -12,12 +12,22 @@ export type InputProps = TextInputProps & {
   hint?: string;
   multiline?: boolean;
   containerStyle?: ViewStyle;
+  /** React 19 passes ref as an ordinary prop — no forwardRef wrapper needed. */
+  ref?: Ref<TextInput>;
 };
 
-export const Input = forwardRef<TextInput, InputProps>(function Input(
-  { label, error, hint, multiline, containerStyle, style, onFocus, onBlur, ...rest },
+export function Input({
+  label,
+  error,
+  hint,
+  multiline,
+  containerStyle,
+  style,
+  onFocus,
+  onBlur,
   ref,
-) {
+  ...rest
+}: InputProps) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
 
@@ -85,4 +95,4 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
       ) : null}
     </View>
   );
-});
+}
