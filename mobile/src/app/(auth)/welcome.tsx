@@ -3,8 +3,10 @@ import { Link, useRouter } from 'expo-router';
 import { View } from 'react-native';
 
 import { Button } from '@/components/Button';
+import { Logo } from '@/components/Logo';
 import { Text } from '@/components/Text';
 import { Row, Screen, Stack } from '@/components/layout';
+import { AppearFromBottom } from '@/components/motion';
 import { useTheme } from '@/theme';
 
 const POINTS = [
@@ -32,32 +34,31 @@ export default function Welcome() {
   return (
     <Screen scroll contentStyle={{ flexGrow: 1, justifyContent: 'space-between' }}>
       <Stack gap={8}>
-        <Stack gap={4} style={{ marginTop: theme.space[8] }}>
-          <View
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: theme.radius.lg,
-              backgroundColor: theme.colors.accent,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Ionicons name="swap-horizontal" size={28} color={theme.colors.onAccent} />
-          </View>
+        <Stack gap={6} style={{ marginTop: theme.space[7] }}>
+          <AppearFromBottom index={0}>
+            <Logo size={44} />
+          </AppearFromBottom>
 
-          <Stack gap={3}>
-            <Text variant="display">Trade what you{'\n'}no longer need.</Text>
-            <Text variant="body" color="textMuted" style={{ maxWidth: 320 }}>
-              Lewe is a barter marketplace. No prices, no listings fees — just
-              things swapping hands between people who both want the trade.
-            </Text>
-          </Stack>
+          <AppearFromBottom index={1}>
+            <Stack gap={3}>
+              <Text variant="display">
+                Trade what you{'\n'}no longer need
+                <Text variant="display" style={{ color: theme.colors.accent }}>
+                  .
+                </Text>
+              </Text>
+              <Text variant="body" color="textMuted" style={{ maxWidth: 330 }}>
+                No prices, no fees, no haggling over money. Just good things
+                changing hands between people who both want the swap.
+              </Text>
+            </Stack>
+          </AppearFromBottom>
         </Stack>
 
         <Stack gap={5}>
-          {POINTS.map((point) => (
-            <Row key={point.title} gap={4} align="flex-start">
+          {POINTS.map((point, i) => (
+            <AppearFromBottom key={point.title} index={i + 2}>
+            <Row gap={4} align="flex-start">
               <View
                 style={{
                   width: 38,
@@ -75,14 +76,21 @@ export default function Welcome() {
                 <Text variant="caption" color="textMuted">
                   {point.body}
                 </Text>
-              </Stack>
-            </Row>
+                </Stack>
+              </Row>
+            </AppearFromBottom>
           ))}
         </Stack>
       </Stack>
 
       <Stack gap={4} style={{ marginTop: theme.space[9] }}>
-        <Button title="Create an account" block size="lg" onPress={() => router.push('/(auth)/register')} />
+        <Button
+          title="Create an account"
+          block
+          size="lg"
+          icon={<Ionicons name="arrow-forward" size={18} color={theme.colors.onAccent} />}
+          onPress={() => router.push('/(auth)/register')}
+        />
         <Row gap={2} justify="center">
           <Text variant="body" color="textMuted">
             Already have one?

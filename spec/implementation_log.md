@@ -288,3 +288,82 @@ mobile/src/
 Phase B2 — the exchange loop: matches list, match detail, accept/decline,
 exchange-method selection, completion, rating. In parallel, roadmap A1 (image
 upload, categories endpoint, public profiles) unblocks the gaps above.
+
+---
+
+## Phase B1.5 — Photos, Brand & Motion (2026-09-04)
+
+### Why
+
+The app worked but read as generated: clinical screen-white, an accent chosen
+for neatness rather than meaning, no logo, and — worst for a barter product —
+no way to add a photograph. A traded object is sold entirely by its picture,
+since that is the only evidence the other person has that the thing is real and
+in the condition claimed.
+
+### API — image upload
+
+New `internal/uploads` package. Files land on local disk and are served back as
+static content.
+
+| Endpoint | Behaviour |
+|---|---|
+| `POST /api/v1/uploads` | Auth'd, `multipart/form-data`, field `file`. 8MB cap enforced twice (MaxBytesReader, then a LimitReader while streaming to disk). Content type allowlisted to JPEG/PNG/WebP/HEIC — SVG is deliberately excluded because it can carry script and would be served from our own origin. Filenames are 128 bits of randomness. |
+| `GET /uploads/{name}` | Static file server. Public by design: an item photo appears on the public feed, so it carries no more access control than the listing. |
+
+**Returns a host-relative path** (`/uploads/abc.jpg`), never an absolute URL.
+The API answers on a different address from a phone than from the machine
+running it, so a stored absolute URL would be wrong the moment the network
+changed. The client joins it at display time via `resolveImageUrl`.
+
+`Store.Save` is the seam: swapping local disk for S3/R2 means implementing that
+one method and leaving the handler untouched.
+
+### App — brand
+
+| Decision | Rationale |
+|---|---|
+| **Warm paper ground (#FBF9F6), never #FFF** | Screen-white is the single biggest tell of a generated-looking interface. Warm paper reads as made by people. |
+| **Green primary** | Trade, reuse and "go" all live in green, and it is a friendlier promise than corporate blue on an app where strangers meet to exchange property. |
+| **"Sun" amber as a second accent** | Reserved for delight — ratings, a completed trade. Never chrome. |
+| **Bigger radii (10/14/20/28)** | Soft shapes read as approachable rather than technical. |
+| **One warm shadow, used sparingly** | On photo cards and floating actions, where lift genuinely helps. |
+| **Logo built from views, not an asset** | Two tiles caught mid-swap — the product in one shape. Inherits theme colors, scales to any size, no new dependency. |
+
+### App — photos as the subject
+
+- `PhotoPicker` — camera or multi-select library, uploads immediately on pick so
+  publishing stays instant, first photo explicitly labelled the cover and
+  reorderable by tap.
+- **Photos are now step 1** of creating a listing, ahead of the title.
+- `ImageCarousel` — full-bleed paged photos on item detail, with dots.
+- `ItemCard` rebuilt photo-first: a 220px image headline instead of a 104px
+  thumbnail, condition badge on the image, and the wants line surfaced so a
+  trade can be ruled out without opening the listing.
+
+### App — motion
+
+`react-native-reanimated`, already a dependency, on the UI thread throughout.
+
+- `PressableScale` — a spring dip under the finger. The most-felt animation in
+  the app; the difference between a screen that reacts and one that navigates.
+- `AppearFromBottom` — staggered list entrance, delay capped at 8 items so the
+  stagger never turns into lag.
+- Buttons spring on press; tab icons switch filled/outline on focus.
+
+### Verification
+
+- `go build`, `go vet`, `gofmt`, `go test` — clean
+- Upload exercised end to end: 201 with a relative URL, fetched back as
+  `image/jpeg`, non-image rejected 415, anonymous rejected 401
+- `npx tsc --noEmit` clean; Android bundle compiles through Metro (HTTP 200)
+- 8 demo listings seeded with 3 photos each **through the real upload endpoint**
+
+### Known Gaps
+
+1. Seeded demo photos are placeholder stock images — they do not depict the
+   items they are attached to.
+2. No image deletion: removing a photo from a listing orphans the file on disk.
+3. No thumbnailing. Full-size images are served to the feed.
+4. Local disk storage does not survive a redeploy — this is the A1 stopgap, not
+   the destination.

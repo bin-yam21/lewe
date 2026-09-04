@@ -68,3 +68,23 @@ export const items = {
 export const ratings = {
   forUser: (userId: string) => api.get<UserRating>(`/users/${userId}/rating`),
 };
+
+/**
+ * Image upload is multipart, so it bypasses the JSON client but reuses its
+ * token handling. Returns the host-relative path to store in `item.images`.
+ */
+export const uploads = {
+  image: async (uri: string, mimeType = 'image/jpeg'): Promise<string> => {
+    const name = uri.split('/').pop() || `photo.${mimeType.split('/')[1] ?? 'jpg'}`;
+
+    const form = new FormData();
+    // React Native's FormData takes this {uri, name, type} shape rather than a
+    // Blob; it streams the file straight from disk.
+    form.append('file', { uri, name, type: mimeType } as unknown as Blob);
+
+    const { url } = await api.post<{ url: string }>('/uploads', undefined, {
+      formData: form,
+    });
+    return url;
+  },
+};

@@ -7,11 +7,12 @@ import (
 	"github.com/yeabt/lewe/internal/matching"
 	"github.com/yeabt/lewe/internal/middleware"
 	"github.com/yeabt/lewe/internal/ratings"
+	"github.com/yeabt/lewe/internal/uploads"
 	"github.com/yeabt/lewe/internal/users"
 )
 
 // New creates and configures the HTTP router with all application routes.
-func New(userHandler *users.Handler, itemHandler *items.Handler, matchHandler *matching.Handler, ratingHandler *ratings.Handler, jwtSecret string) http.Handler {
+func New(userHandler *users.Handler, itemHandler *items.Handler, matchHandler *matching.Handler, ratingHandler *ratings.Handler, uploadHandler *uploads.Handler, uploadDir string, jwtSecret string) http.Handler {
 	mux := http.NewServeMux()
 
 	authMW := middleware.Auth(jwtSecret)
@@ -47,6 +48,17 @@ func New(userHandler *users.Handler, itemHandler *items.Handler, matchHandler *m
 	mux.Handle("POST /api/v1/matches/{id}/rate", authMW(http.HandlerFunc(ratingHandler.Rate)))
 	mux.Handle("GET /api/v1/matches/{id}/ratings", authMW(http.HandlerFunc(ratingHandler.GetMatchRatings)))
 	mux.HandleFunc("GET /api/v1/users/{id}/rating", ratingHandler.GetUserRating)
+
+	// --- Uploads ---
+	mux.Handle("POST /api/v1/uploads", authMW(http.HandlerFunc(uploadHandler.Upload)))
+
+	// Stored images are served straight off disk. Public by design: an item
+	// photo is shown on the public feed, so it carries no more access control
+	// than the listing itself. Filenames are 128 bits of randomness, so they
+	// are not guessable.
+	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/",
+		http.FileServer(http.Dir(uploadDir)),
+	))
 
 	// --- Health check ---
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

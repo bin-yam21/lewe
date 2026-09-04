@@ -2,29 +2,44 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { View } from 'react-native';
 
+import { resolveImageUrl } from '@/api/config';
 import { labelForCategory, labelForCondition, type Item } from '@/api/types';
 import { useTheme } from '@/theme';
 
 import { Text } from './Text';
-import { Badge } from './feedback';
-import { Card, Row, Stack } from './layout';
+import { Row, Stack } from './layout';
+import { PressableScale } from './motion';
 
 /**
- * One listing in the feed. Leads with the photo when there is one, and always
- * shows what the owner wants back — that is the information that decides whether
- * a trade is even possible, so it should never be a tap away.
+ * One listing in the feed, built photo-first.
+ *
+ * The image is the headline, not a thumbnail: it is the only proof the item is
+ * real. Underneath it the card answers the one question that decides whether a
+ * trade is even possible — what this person wants back — so nobody has to open
+ * a listing to rule it out.
  */
 export function ItemCard({ item, onPress }: { item: Item; onPress: () => void }) {
   const theme = useTheme();
-  const cover = item.images?.[0];
+  const cover = resolveImageUrl(item.images?.[0]);
+  const extraPhotos = Math.max(0, (item.images?.length ?? 0) - 1);
   const wants = item.wants ?? [];
 
   return (
-    <Card onPress={onPress} padded={false}>
-      <Row gap={0} align="stretch">
+    <PressableScale onPress={onPress} scaleTo={0.985}>
+      <View
+        style={{
+          borderRadius: theme.radius.xl,
+          backgroundColor: theme.colors.surface,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          overflow: 'hidden',
+          ...theme.shadow('card'),
+        }}
+      >
+        {/* Photo */}
         <View
           style={{
-            width: 104,
+            height: 220,
             backgroundColor: theme.colors.surfaceAlt,
             alignItems: 'center',
             justifyContent: 'center',
@@ -35,44 +50,100 @@ export function ItemCard({ item, onPress }: { item: Item; onPress: () => void })
               source={{ uri: cover }}
               style={{ width: '100%', height: '100%' }}
               contentFit="cover"
-              transition={160}
+              transition={220}
             />
           ) : (
-            <Ionicons name="image-outline" size={22} color={theme.colors.textFaint} />
-          )}
-        </View>
-
-        <Stack gap={2} style={{ flex: 1, padding: theme.space[4] }}>
-          <Row justify="space-between" align="flex-start" gap={2}>
-            <Text variant="bodyStrong" numberOfLines={1} style={{ flex: 1 }}>
-              {item.title}
-            </Text>
-            <Badge label={labelForCondition(item.condition)} />
-          </Row>
-
-          <Text variant="caption" color="textMuted" numberOfLines={2}>
-            {item.description}
-          </Text>
-
-          <Row gap={2} wrap>
-            <Row gap={1}>
-              <Ionicons name="pricetag-outline" size={12} color={theme.colors.textFaint} />
+            <Stack gap={2} style={{ alignItems: 'center' }}>
+              <Ionicons name="image-outline" size={26} color={theme.colors.textFaint} />
               <Text variant="caption" color="textFaint">
-                {labelForCategory(item.category)}
+                No photo yet
+              </Text>
+            </Stack>
+          )}
+
+          {/* Condition sits on the photo — it is part of what you are judging. */}
+          <View
+            style={{
+              position: 'absolute',
+              top: theme.space[3],
+              left: theme.space[3],
+              backgroundColor: theme.colors.surface,
+              paddingHorizontal: theme.space[3],
+              paddingVertical: theme.space[1] + 2,
+              borderRadius: theme.radius.full,
+            }}
+          >
+            <Text variant="label" uppercase color="text">
+              {labelForCondition(item.condition)}
+            </Text>
+          </View>
+
+          {extraPhotos > 0 ? (
+            <Row
+              gap={1}
+              style={{
+                position: 'absolute',
+                top: theme.space[3],
+                right: theme.space[3],
+                backgroundColor: theme.colors.scrim,
+                paddingHorizontal: theme.space[2] + 2,
+                paddingVertical: theme.space[1] + 2,
+                borderRadius: theme.radius.full,
+              }}
+            >
+              <Ionicons name="images" size={11} color="#FFFFFF" />
+              <Text variant="label" style={{ color: '#FFFFFF' }}>
+                +{extraPhotos}
               </Text>
             </Row>
+          ) : null}
+        </View>
 
-            {wants.length > 0 ? (
-              <Row gap={1}>
-                <Ionicons name="arrow-forward" size={12} color={theme.colors.accent} />
-                <Text variant="caption" color="accent" numberOfLines={1}>
-                  wants {wants.map((w) => labelForCategory(w.category)).join(', ')}
-                </Text>
-              </Row>
-            ) : null}
-          </Row>
+        {/* Detail */}
+        <Stack gap={3} style={{ padding: theme.space[4] }}>
+          <Stack gap={1}>
+            <Text variant="heading" numberOfLines={1}>
+              {item.title}
+            </Text>
+            <Row gap={2}>
+              <Text variant="caption" color="textMuted">
+                {labelForCategory(item.category)}
+              </Text>
+              {item.location ? (
+                <>
+                  <Text variant="caption" color="textFaint">
+                    ·
+                  </Text>
+                  <Row gap={1}>
+                    <Ionicons name="location" size={11} color={theme.colors.textFaint} />
+                    <Text variant="caption" color="textFaint" numberOfLines={1}>
+                      {item.location}
+                    </Text>
+                  </Row>
+                </>
+              ) : null}
+            </Row>
+          </Stack>
+
+          {wants.length > 0 ? (
+            <Row
+              gap={2}
+              align="center"
+              style={{
+                backgroundColor: theme.colors.accentSubtle,
+                paddingHorizontal: theme.space[3],
+                paddingVertical: theme.space[2] + 2,
+                borderRadius: theme.radius.md,
+              }}
+            >
+              <Ionicons name="swap-horizontal" size={15} color={theme.colors.accent} />
+              <Text variant="caption" color="accent" numberOfLines={1} style={{ flex: 1 }}>
+                Wants {wants.map((w) => labelForCategory(w.category)).join(' · ')}
+              </Text>
+            </Row>
+          ) : null}
         </Stack>
-      </Row>
-    </Card>
+      </View>
+    </PressableScale>
   );
 }

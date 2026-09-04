@@ -35,3 +35,16 @@ function resolveBaseUrl(): string {
 
 export const API_BASE_URL = resolveBaseUrl();
 export const API_V1 = `${API_BASE_URL}/api/v1`;
+
+/**
+ * Item photos are stored with a host-relative path ("/uploads/abc.jpg") rather
+ * than a full URL, because the API answers on a different address from a phone
+ * than from the machine running it. Joining happens here, at display time.
+ */
+export function resolveImageUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+    return url;
+  }
+  return `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+}

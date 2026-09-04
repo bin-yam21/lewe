@@ -8,9 +8,11 @@ import { ApiError } from '@/api/client';
 import { CATEGORIES, labelForCategory, type Item } from '@/api/types';
 import { Input } from '@/components/Input';
 import { ItemCard } from '@/components/ItemCard';
+import { LogoMark } from '@/components/Logo';
 import { Text } from '@/components/Text';
 import { Chip, EmptyState, ErrorState, Skeleton } from '@/components/feedback';
 import { Row, Stack } from '@/components/layout';
+import { AppearFromBottom } from '@/components/motion';
 import { useDebounced } from '@/hooks/useDebounced';
 import { useItemsFeed } from '@/hooks/useItems';
 import { useAuth } from '@/hooks/useAuth';
@@ -43,7 +45,7 @@ export default function Feed() {
     () => ({
       padding: theme.space[5],
       paddingBottom: theme.space[9],
-      gap: theme.space[3],
+      gap: theme.space[4],
     }),
     [theme.space],
   );
@@ -66,12 +68,18 @@ export default function Feed() {
         }}
         ListHeaderComponent={
           <Stack gap={5} style={{ marginBottom: theme.space[2] }}>
-            <Stack gap={1}>
-              <Text variant="caption" color="textMuted">
-                Hey {firstName}
-              </Text>
-              <Text variant="title">Find your next trade</Text>
-            </Stack>
+            <Row justify="space-between" align="center">
+              <Stack gap={1} style={{ flex: 1 }}>
+                <Row gap={2}>
+                  <Text variant="caption" color="textMuted">
+                    Hey {firstName}
+                  </Text>
+                  <Text variant="caption">👋</Text>
+                </Row>
+                <Text variant="title">Find your next trade</Text>
+              </Stack>
+              <LogoMark size={38} />
+            </Row>
 
             <Input
               value={search}
@@ -103,9 +111,9 @@ export default function Feed() {
         }
         ListEmptyComponent={
           query.isLoading ? (
-            <Stack gap={3}>
-              {[0, 1, 2, 3].map((i) => (
-                <Skeleton key={i} height={116} radius={theme.radius.lg} />
+            <Stack gap={4}>
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} height={340} radius={theme.radius.xl} />
               ))}
             </Stack>
           ) : query.isError ? (
@@ -126,13 +134,15 @@ export default function Feed() {
           ) : (
             <EmptyState
               icon="cube-outline"
-              title="No listings yet"
-              message="Be the first — list something you would trade and see who bites."
+              title="Nothing here yet"
+              message="Be the first — photograph something you would trade and see who bites."
             />
           )
         }
-        renderItem={({ item }) => (
-          <ItemCard item={item} onPress={() => router.push(`/item/${item.id}`)} />
+        renderItem={({ item, index }) => (
+          <AppearFromBottom index={index}>
+            <ItemCard item={item} onPress={() => router.push(`/item/${item.id}`)} />
+          </AppearFromBottom>
         )}
         ListFooterComponent={
           query.isFetchingNextPage ? (

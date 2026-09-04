@@ -1,9 +1,18 @@
 /**
  * Design tokens for Lewe.
  *
- * Direction: clean & modern. High-contrast neutrals, a single vivid accent used
- * only for primary actions and active state, flat surfaces on a tinted ground
- * rather than cards floating on shadows.
+ * Direction: warm, credible, and a little joyful. Strangers arrange to meet and
+ * hand each other their possessions on this app, so it has to look like a place
+ * run by people — not a dashboard.
+ *
+ * Three decisions carry most of that feeling:
+ *
+ *  - The ground is warm paper (#FBF9F6), never pure #FFF. Screen-white reads as
+ *    clinical and is the single biggest tell of a generated-looking interface.
+ *  - The primary is a confident green. Trade, reuse and "go" all live there, and
+ *    it is a friendlier promise than corporate blue.
+ *  - "Sun" amber is reserved for moments of delight — ratings, a successful
+ *    trade, a new match. Never for chrome.
  *
  * Nothing in the app hardcodes a color. Screens read these through `useTheme()`,
  * which is what makes dark mode a token swap instead of a rewrite.
@@ -11,67 +20,82 @@
 
 export const palette = {
   light: {
-    /** App background — the paper everything sits on. */
-    bg: '#FFFFFF',
-    /** Slightly tinted ground, so flat cards separate without shadows. */
-    bgSubtle: '#F5F6F8',
+    /** Warm paper, not screen-white. */
+    bg: '#FBF9F6',
+    bgSubtle: '#F4F0E9',
     surface: '#FFFFFF',
-    surfaceAlt: '#F0F2F5',
-    surfacePressed: '#E8EBF0',
+    surfaceAlt: '#F4F1EB',
+    surfacePressed: '#EAE4DA',
 
-    border: '#E4E7EC',
-    borderStrong: '#D0D5DD',
+    border: '#E9E2D8',
+    borderStrong: '#D7CFC2',
 
-    text: '#0B0B0F',
-    textMuted: '#667085',
-    textFaint: '#98A2B3',
-    /** Text/icons drawn on top of the accent color. */
+    text: '#191614',
+    textMuted: '#6E6761',
+    textFaint: '#9C948B',
+    /** Text and icons drawn on top of the accent color. */
     onAccent: '#FFFFFF',
 
-    accent: '#4F46E5',
-    accentPressed: '#4338CA',
-    accentSubtle: '#EEEEFF',
-    accentBorder: '#C7C5FF',
+    accent: '#0F9D63',
+    accentPressed: '#0B7E4F',
+    accentSubtle: '#E4F5EC',
+    accentBorder: '#A9E1C6',
 
-    success: '#067647',
-    successSubtle: '#E6F6EE',
-    warning: '#B54708',
-    warningSubtle: '#FEF0C7',
-    danger: '#D92D20',
-    dangerSubtle: '#FEE4E2',
+    /** Joy, warmth, reward. Ratings and celebratory moments only. */
+    sun: '#E8890B',
+    sunSubtle: '#FDF1DE',
+    coral: '#F0603C',
+    coralSubtle: '#FDE9E3',
 
-    overlay: 'rgba(11, 11, 15, 0.55)',
-    skeleton: '#EAECF0',
+    success: '#0F9D63',
+    successSubtle: '#E4F5EC',
+    warning: '#B06A08',
+    warningSubtle: '#FDF1DE',
+    danger: '#CE3B23',
+    dangerSubtle: '#FCE7E2',
+
+    overlay: 'rgba(25, 22, 20, 0.55)',
+    /** Sits over photos so white text stays readable on a bright image. */
+    scrim: 'rgba(15, 13, 12, 0.42)',
+    skeleton: '#EDE7DE',
+    shadow: '#4A3F33',
   },
   dark: {
-    bg: '#0B0B0F',
-    bgSubtle: '#101017',
-    surface: '#16161D',
-    surfaceAlt: '#1E1E27',
-    surfacePressed: '#262630',
+    bg: '#121110',
+    bgSubtle: '#181614',
+    surface: '#1E1B19',
+    surfaceAlt: '#272321',
+    surfacePressed: '#312C29',
 
-    border: '#26262F',
-    borderStrong: '#383843',
+    border: '#2D2926',
+    borderStrong: '#403935',
 
-    text: '#F5F6F8',
-    textMuted: '#9BA1AC',
-    textFaint: '#6B7280',
-    onAccent: '#FFFFFF',
+    text: '#F7F4F0',
+    textMuted: '#A8A099',
+    textFaint: '#7B746D',
+    onAccent: '#06231A',
 
-    accent: '#6366F1',
-    accentPressed: '#575AE8',
-    accentSubtle: '#1A1A2E',
-    accentBorder: '#33335C',
+    accent: '#3ED598',
+    accentPressed: '#2BBE84',
+    accentSubtle: '#0F2A20',
+    accentBorder: '#1F4C39',
 
-    success: '#3DD68C',
-    successSubtle: '#0C1F17',
-    warning: '#F59E0B',
-    warningSubtle: '#241A0B',
-    danger: '#F97066',
-    dangerSubtle: '#2A1211',
+    sun: '#F5B23C',
+    sunSubtle: '#2A2011',
+    coral: '#FF7C5C',
+    coralSubtle: '#2E1913',
+
+    success: '#3ED598',
+    successSubtle: '#0F2A20',
+    warning: '#F5B23C',
+    warningSubtle: '#2A2011',
+    danger: '#FF7C66',
+    dangerSubtle: '#2E1614',
 
     overlay: 'rgba(0, 0, 0, 0.7)',
-    skeleton: '#1E1E27',
+    scrim: 'rgba(0, 0, 0, 0.5)',
+    skeleton: '#272321',
+    shadow: '#000000',
   },
 } as const;
 
@@ -97,11 +121,12 @@ export const space = {
   10: 64,
 } as const;
 
+/** Generous rounding — soft shapes read as approachable rather than technical. */
 export const radius = {
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 22,
+  sm: 10,
+  md: 14,
+  lg: 20,
+  xl: 28,
   full: 999,
 } as const;
 
@@ -110,9 +135,9 @@ export const radius = {
  * stays at a comfortable 15px with generous line height for scanning listings.
  */
 export const type = {
-  display: { fontSize: 32, lineHeight: 38, fontWeight: '700', letterSpacing: -0.6 },
-  title: { fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: -0.4 },
-  heading: { fontSize: 18, lineHeight: 24, fontWeight: '600', letterSpacing: -0.2 },
+  display: { fontSize: 34, lineHeight: 40, fontWeight: '800', letterSpacing: -0.8 },
+  title: { fontSize: 25, lineHeight: 31, fontWeight: '700', letterSpacing: -0.5 },
+  heading: { fontSize: 18, lineHeight: 24, fontWeight: '700', letterSpacing: -0.2 },
   body: { fontSize: 15, lineHeight: 22, fontWeight: '400', letterSpacing: 0 },
   bodyStrong: { fontSize: 15, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
   caption: { fontSize: 13, lineHeight: 18, fontWeight: '400', letterSpacing: 0 },
@@ -121,9 +146,30 @@ export const type = {
 
 export type TypeVariant = keyof typeof type;
 
-/** Motion: short and functional. Press feedback matters more than transitions. */
+/** Motion: quick and springy. Press feedback matters more than transitions. */
 export const motion = {
   fast: 120,
-  base: 180,
-  slow: 260,
+  base: 220,
+  slow: 380,
+  /** Shared spring config so everything that moves feels like one system. */
+  spring: { damping: 16, stiffness: 220, mass: 0.6 },
+} as const;
+
+/**
+ * One soft, warm shadow. Used sparingly — on photo cards and floating actions,
+ * where lift genuinely helps, rather than on every surface.
+ */
+export const elevation = {
+  card: {
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 3,
+  },
+  lifted: {
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 24,
+    elevation: 8,
+  },
 } as const;

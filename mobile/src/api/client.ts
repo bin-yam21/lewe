@@ -28,6 +28,11 @@ export class ApiError extends Error {
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
+  /**
+   * Multipart payload. Takes precedence over `body`; the Content-Type header is
+   * deliberately left unset so the runtime can add its own multipart boundary.
+   */
+  formData?: FormData;
   /** Skip the Authorization header and the refresh dance (auth endpoints). */
   anonymous?: boolean;
   signal?: AbortSignal;
@@ -105,13 +110,21 @@ async function parseError(res: Response): Promise<ApiError> {
 
 async function send(path: string, options: RequestOptions, accessToken: string | null) {
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (options.formData === undefined && options.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
+  const body = options.formData
+    ? options.formData
+    : options.body === undefined
+      ? undefined
+      : JSON.stringify(options.body);
 
   return fetch(`${API_V1}${path}`, {
     method: options.method ?? 'GET',
     headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body,
     signal: options.signal,
   });
 }
@@ -159,6 +172,7 @@ export const api = {
     request<T>(path, { ...options, method: 'GET' }),
   post: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>) =>
     request<T>(path, { ...options, method: 'POST', body }),
+
   put: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>) =>
     request<T>(path, { ...options, method: 'PUT', body }),
   delete: <T>(path: string, options?: Omit<RequestOptions, 'method' | 'body'>) =>

@@ -15,6 +15,7 @@ import (
 	"github.com/yeabt/lewe/internal/matching"
 	"github.com/yeabt/lewe/internal/ratings"
 	"github.com/yeabt/lewe/internal/router"
+	"github.com/yeabt/lewe/internal/uploads"
 	"github.com/yeabt/lewe/internal/users"
 )
 
@@ -52,8 +53,15 @@ func main() {
 	ratingSvc := ratings.NewService(ratingRepo, matchSvc)
 	ratingHandler := ratings.NewHandler(ratingSvc)
 
+	// Uploads: item photographs, stored on local disk for now
+	uploadStore, err := uploads.NewStore("uploads", "/uploads")
+	if err != nil {
+		log.Fatalf("Unable to prepare upload directory: %v", err)
+	}
+	uploadHandler := uploads.NewHandler(uploadStore)
+
 	// Build router
-	r := router.New(userHandler, itemHandler, matchHandler, ratingHandler, cfg.JWTSecret)
+	r := router.New(userHandler, itemHandler, matchHandler, ratingHandler, uploadHandler, uploadStore.Dir(), cfg.JWTSecret)
 
 	// Configure HTTP server
 	srv := &http.Server{

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,9 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError } from '@/api/client';
 import { labelForCategory, labelForCondition } from '@/api/types';
 import { Button } from '@/components/Button';
+import { ImageCarousel } from '@/components/ImageCarousel';
 import { Text } from '@/components/Text';
 import { Avatar, Badge, ErrorState, Skeleton } from '@/components/feedback';
 import { Card, Divider, Row, Stack } from '@/components/layout';
+import { AppearFromBottom } from '@/components/motion';
 import { useAuth } from '@/hooks/useAuth';
 import { useItem, useUserRating } from '@/hooks/useItems';
 import { useTheme } from '@/theme';
@@ -25,7 +26,6 @@ export default function ItemDetail() {
   const { data: rating } = useUserRating(item?.user_id);
 
   const isMine = !!item && item.user_id === user?.id;
-  const cover = item?.images?.[0];
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
@@ -33,25 +33,9 @@ export default function ItemDetail() {
         contentContainerStyle={{ paddingBottom: theme.space[9] }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero */}
-        <View
-          style={{
-            height: 280,
-            backgroundColor: theme.colors.surfaceAlt,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          {cover ? (
-            <Image
-              source={{ uri: cover }}
-              style={{ width: '100%', height: '100%' }}
-              contentFit="cover"
-              transition={200}
-            />
-          ) : (
-            <Ionicons name="image-outline" size={40} color={theme.colors.textFaint} />
-          )}
+        {/* Hero — the photos carry the listing, so they lead and go full bleed. */}
+        <View>
+          <ImageCarousel images={item?.images ?? []} height={360} />
 
           <Pressable
             onPress={() => router.back()}

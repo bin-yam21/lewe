@@ -4,7 +4,10 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Image } from 'expo-image';
+
 import { ApiError } from '@/api/client';
+import { resolveImageUrl } from '@/api/config';
 import {
   CATEGORIES,
   CONDITIONS,
@@ -16,14 +19,16 @@ import {
 import { Button } from '@/components/Button';
 import { Input } from '@/components/Input';
 import { Text } from '@/components/Text';
+import { PhotoPicker } from '@/components/PhotoPicker';
 import { Chip } from '@/components/feedback';
 import { Divider, Row, Stack } from '@/components/layout';
 import { useCreateItem } from '@/hooks/useItems';
 import { useTheme } from '@/theme';
 
-type Step = 'details' | 'wants' | 'review';
+type Step = 'photos' | 'details' | 'wants' | 'review';
 
 const STEPS: { key: Step; label: string }[] = [
+  { key: 'photos', label: 'Photos' },
   { key: 'details', label: 'Item' },
   { key: 'wants', label: 'Wants' },
   { key: 'review', label: 'Review' },
@@ -35,8 +40,9 @@ export default function CreateListing() {
   const insets = useSafeAreaInsets();
   const createItem = useCreateItem();
 
-  const [step, setStep] = useState<Step>('details');
+  const [step, setStep] = useState<Step>('photos');
 
+  const [images, setImages] = useState<string[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<string | undefined>();
@@ -64,6 +70,7 @@ export default function CreateListing() {
   const wantsValid = wantCategories.length > 0;
 
   function reset() {
+    setImages([]);
     setTitle('');
     setDescription('');
     setCategory(undefined);
@@ -72,7 +79,7 @@ export default function CreateListing() {
     setLocation('');
     setWantCategories([]);
     setWantNote('');
-    setStep('details');
+    setStep('photos');
     setError(null);
     setFields({});
   }
@@ -96,7 +103,7 @@ export default function CreateListing() {
         condition,
         exchange_method: exchangeMethod,
         location: location.trim() || undefined,
-        images: [],
+        images,
         wants: wantCategories.map((c, i) => ({
           category: c,
           // The note applies to the listing as a whole; attach it to the first
@@ -176,6 +183,28 @@ export default function CreateListing() {
           </View>
         ) : null}
 
+        {step === 'photos' ? (
+          <Stack gap={5}>
+            <Stack gap={2}>
+              <Text variant="heading">Show it off</Text>
+              <Text variant="body" color="textMuted">
+                The photo is the first thing anyone judges. A clear shot in
+                daylight is worth more than any description.
+              </Text>
+            </Stack>
+
+            <PhotoPicker value={images} onChange={setImages} />
+
+            <Button
+              title={images.length ? 'Continue' : 'Skip for now'}
+              variant={images.length ? 'primary' : 'secondary'}
+              block
+              size="lg"
+              onPress={() => setStep('details')}
+            />
+          </Stack>
+        ) : null}
+
         {step === 'details' ? (
           <Stack gap={5}>
             <Input
@@ -251,13 +280,16 @@ export default function CreateListing() {
               placeholder="Addis Ababa"
             />
 
-            <Button
-              title="Continue"
-              block
-              size="lg"
-              disabled={!detailsValid}
-              onPress={() => setStep('wants')}
-            />
+            <Row gap={3}>
+              <Button title="Back" variant="secondary" size="lg" onPress={() => setStep('photos')} />
+              <Button
+                title="Continue"
+                size="lg"
+                style={{ flex: 1 }}
+                disabled={!detailsValid}
+                onPress={() => setStep('wants')}
+              />
+            </Row>
           </Stack>
         ) : null}
 
@@ -306,6 +338,45 @@ export default function CreateListing() {
         {step === 'review' ? (
           <Stack gap={5}>
             <Text variant="heading">Look right?</Text>
+
+            {images.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: theme.space[3] }}
+              >
+                {images.map((url) => (
+                  <Image
+                    key={url}
+                    source={{ uri: resolveImageUrl(url) }}
+                    style={{
+                      width: 108,
+                      height: 138,
+                      borderRadius: theme.radius.lg,
+                      backgroundColor: theme.colors.surfaceAlt,
+                    }}
+                    contentFit="cover"
+                    transition={180}
+                  />
+                ))}
+              </ScrollView>
+            ) : (
+              <Row
+                gap={3}
+                align="flex-start"
+                style={{
+                  backgroundColor: theme.colors.sunSubtle,
+                  padding: theme.space[4],
+                  borderRadius: theme.radius.md,
+                }}
+              >
+                <Ionicons name="bulb-outline" size={18} color={theme.colors.warning} />
+                <Text variant="caption" color="warning" style={{ flex: 1 }}>
+                  No photos. Listings with a picture get taken seriously — you can
+                  still add some by going back.
+                </Text>
+              </Row>
+            )}
 
             <Stack gap={4}>
               <ReviewRow label="Title" value={title} />

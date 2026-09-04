@@ -7,10 +7,17 @@ import {
   type PressableProps,
   type ViewStyle,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 
-import { useTheme } from '@/theme';
+import { motion, useTheme } from '@/theme';
 
 import { Text } from './Text';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'sm' | 'md' | 'lg';
@@ -43,6 +50,13 @@ export function Button({
   const theme = useTheme();
   const isDisabled = disabled || loading;
 
+  // Springs on the UI thread, so the dip stays smooth even while the press
+  // handler is doing work on the JS thread.
+  const press = useSharedValue(0);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: withSpring(1 - press.value * 0.035, motion.spring) }],
+  }));
+
   const colorsFor = (pressed: boolean) => {
     switch (variant) {
       case 'primary':
@@ -73,10 +87,16 @@ export function Button({
   };
 
   return (
-    <Pressable
+    <AnimatedPressable
       accessibilityRole="button"
       accessibilityState={{ disabled: !!isDisabled, busy: loading }}
       disabled={isDisabled}
+      onPressIn={() => {
+        press.value = 1;
+      }}
+      onPressOut={() => {
+        press.value = 0;
+      }}
       onPress={(e) => {
         // A short tap tick makes the whole app feel more responsive than any
         // transition animation would.
@@ -85,7 +105,7 @@ export function Button({
         }
         onPress?.(e);
       }}
-      style={({ pressed }) => {
+      style={({ pressed }: { pressed: boolean }) => {
         const c = colorsFor(pressed);
         return [
           {
@@ -103,6 +123,7 @@ export function Button({
             opacity: isDisabled ? 0.45 : 1,
           } satisfies ViewStyle,
           style,
+          animatedStyle,
         ];
       }}
       {...rest}
@@ -124,6 +145,6 @@ export function Button({
           </>
         );
       }}
-    </Pressable>
+    </AnimatedPressable>
   );
 }

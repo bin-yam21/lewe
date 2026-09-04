@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
 
-import { motion, palette, radius, space, type, type Colors } from './tokens';
+import { elevation, motion, palette, radius, space, type, type Colors } from './tokens';
 
 export * from './tokens';
 
@@ -11,6 +11,9 @@ type Theme = {
   radius: typeof radius;
   type: typeof type;
   motion: typeof motion;
+  elevation: typeof elevation;
+  /** Card shadow already tinted with the palette's shadow color. */
+  shadow: (level?: 'card' | 'lifted') => object;
   scheme: 'light' | 'dark';
   isDark: boolean;
 };
@@ -27,6 +30,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       radius,
       type,
       motion,
+      elevation,
+      shadow: (level: 'card' | 'lifted' = 'card') => ({
+        ...elevation[level],
+        shadowColor: palette[scheme].shadow,
+      }),
       scheme,
       isDark: scheme === 'dark',
     }),
