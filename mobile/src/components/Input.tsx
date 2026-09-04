@@ -31,6 +31,13 @@ export function Input({
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
 
+  // `lineHeight` is pulled off the body type token deliberately. On Android a
+  // lineHeight on a TextInput fights the fixed minHeight and vertical
+  // alignment, and the entered text ends up clipped out of the visible box —
+  // you type and nothing appears. Multiline fields need it for readable
+  // wrapping and do not have the single-line centering conflict.
+  const { lineHeight, ...bodyType } = theme.type.body;
+
   const borderColor = error
     ? theme.colors.danger
     : focused
@@ -75,8 +82,8 @@ export function Input({
               paddingVertical: theme.space[3],
               minHeight: multiline ? 104 : 46,
               color: theme.colors.text,
-              textAlignVertical: multiline ? 'top' : 'center',
-              ...theme.type.body,
+              ...bodyType,
+              ...(multiline ? { lineHeight, textAlignVertical: 'top' as const } : null),
             },
             style,
           ]}
