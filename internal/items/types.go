@@ -20,6 +20,9 @@ type CreateItemRequest struct {
 	Images         []string    `json:"images"`
 	Location       *string     `json:"location,omitempty"`
 	Wants          []WantInput `json:"wants"`
+	// Private items never appear in the browse feed. They exist so someone can
+	// offer a thing directly without publishing it to everyone first.
+	Private bool `json:"private,omitempty"`
 }
 
 // UpdateItemRequest is the payload for updating an existing item.

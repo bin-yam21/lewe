@@ -46,6 +46,47 @@ func (h *Handler) FindMatches(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, result)
 }
 
+// Offer handles POST /api/v1/items/{id}/offers
+func (h *Handler) Offer(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.UserIDFromContext(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	targetItemID, err := parsePathUUID(r, "id")
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid item ID")
+		return
+	}
+
+	var req OfferRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	var offerItemID pgtype.UUID
+	if err := offerItemID.Scan(req.OfferItemID); err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid offer_item_id")
+		return
+	}
+
+	result, err := h.svc.OfferTrade(r.Context(), userID, targetItemID, offerItemID, req.Message)
+	if err != nil {
+		// An existing offer is not a failure worth losing the match over —
+		// return the one that already exists so the app can open it.
+		if errors.Is(err, ErrOfferExists) && result != nil {
+			response.JSON(w, http.StatusOK, result)
+			return
+		}
+		h.handleError(w, err)
+		return
+	}
+
+	response.JSON(w, http.StatusCreated, result)
+}
+
 // ListMine handles GET /api/v1/matches
 func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.UserIDFromContext(r.Context())
@@ -183,6 +224,12 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusNotFound, "Item not found")
 	case errors.Is(err, items.ErrNotItemOwner):
 		response.Error(w, http.StatusForbidden, "You are not the owner of this item")
+	case errors.Is(err, ErrOwnItem):
+		response.Error(w, http.StatusBadRequest, "You cannot offer a trade on your own item")
+	case errors.Is(err, ErrInvalidOffer):
+		response.Error(w, http.StatusBadRequest, "Pick a different item to offer")
+	case errors.Is(err, ErrItemUnavailable):
+		response.Error(w, http.StatusConflict, "That item is no longer available to trade")
 	default:
 		response.Error(w, http.StatusInternalServerError, "Internal server error")
 	}

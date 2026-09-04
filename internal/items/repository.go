@@ -53,7 +53,9 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 // Create inserts a new item and its associated wants in a single transaction.
-func (r *Repository) Create(ctx context.Context, userID pgtype.UUID, title, description, category, condition, exchangeMethod string, images []string, location *string, wants []WantInput) (*ItemRow, []WantRow, error) {
+// status is normally "active"; "private" creates an item that never appears in
+// the browse feed and exists only to be offered directly to someone.
+func (r *Repository) Create(ctx context.Context, userID pgtype.UUID, title, description, category, condition, exchangeMethod, status string, images []string, location *string, wants []WantInput) (*ItemRow, []WantRow, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -67,10 +69,10 @@ func (r *Repository) Create(ctx context.Context, userID pgtype.UUID, title, desc
 
 	item := &ItemRow{}
 	err = tx.QueryRow(ctx,
-		`INSERT INTO items (user_id, title, description, category, condition, exchange_method, images, location)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO items (user_id, title, description, category, condition, exchange_method, images, location, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, user_id, title, description, category, condition, exchange_method, images, location, status, created_at, updated_at`,
-		userID, title, description, category, condition, exchangeMethod, imagesJSON, location,
+		userID, title, description, category, condition, exchangeMethod, imagesJSON, location, status,
 	).Scan(
 		&item.ID, &item.UserID, &item.Title, &item.Description, &item.Category,
 		&item.Condition, &item.ExchangeMethod, &item.Images, &item.Location,
@@ -252,8 +254,9 @@ func (r *Repository) List(ctx context.Context, f ListItemsFilter) ([]ItemRow, in
 		args = append(args, f.Status)
 		argIdx++
 	} else {
-		// Default: exclude archived
-		whereClauses = append(whereClauses, "i.status != 'archived'")
+		// Default: hide both soft-deleted items and items kept back for direct
+		// offers. Neither belongs in a browse feed.
+		whereClauses = append(whereClauses, "i.status NOT IN ('archived', 'private')")
 	}
 	if f.UserID != "" {
 		var uid pgtype.UUID
@@ -310,6 +313,46 @@ func (r *Repository) List(ctx context.Context, f ListItemsFilter) ([]ItemRow, in
 	}
 
 	return items, total, nil
+}
+
+// Similar finds other people's active items in the same category.
+//
+// Category equality is a crude notion of similarity, but it is the honest one
+// given the schema: category is the only structured attribute an item has, and
+// it is exactly what the matching query compares. Anything cleverer would be
+// inventing signal that is not there yet.
+func (r *Repository) Similar(ctx context.Context, itemID pgtype.UUID, limit int) ([]ItemRow, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT i.id, i.user_id, i.title, i.description, i.category, i.condition,
+		        i.exchange_method, i.images, i.location, i.status, i.created_at, i.updated_at
+		 FROM items i
+		 JOIN items src ON src.id = $1
+		 WHERE i.id != src.id
+		   AND i.user_id != src.user_id
+		   AND i.category = src.category
+		   AND i.status = 'active'
+		 ORDER BY i.created_at DESC
+		 LIMIT $2`,
+		itemID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []ItemRow
+	for rows.Next() {
+		var item ItemRow
+		if err := rows.Scan(
+			&item.ID, &item.UserID, &item.Title, &item.Description, &item.Category,
+			&item.Condition, &item.ExchangeMethod, &item.Images, &item.Location,
+			&item.Status, &item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 // UpdateStatus changes an item's status.

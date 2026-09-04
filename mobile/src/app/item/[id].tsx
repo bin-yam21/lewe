@@ -1,18 +1,22 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api/client';
+import { resolveImageUrl } from '@/api/config';
 import { labelForCategory, labelForCondition } from '@/api/types';
 import { Button } from '@/components/Button';
 import { ImageCarousel } from '@/components/ImageCarousel';
+import { OfferSheet } from '@/components/OfferSheet';
 import { Text } from '@/components/Text';
 import { Avatar, Badge, ErrorState, Skeleton } from '@/components/feedback';
 import { Card, Divider, Row, Stack } from '@/components/layout';
-import { AppearFromBottom } from '@/components/motion';
+import { AppearFromBottom, PressableScale } from '@/components/motion';
 import { useAuth } from '@/hooks/useAuth';
-import { useItem, useUserRating } from '@/hooks/useItems';
+import { useItem, useSimilarItems, useUserRating } from '@/hooks/useItems';
 import { useTheme } from '@/theme';
 
 export default function ItemDetail() {
@@ -24,6 +28,9 @@ export default function ItemDetail() {
 
   const { data: item, isLoading, isError, error, refetch } = useItem(id);
   const { data: rating } = useUserRating(item?.user_id);
+  const { data: similar } = useSimilarItems(id);
+
+  const [offerOpen, setOfferOpen] = useState(false);
 
   const isMine = !!item && item.user_id === user?.id;
 
@@ -156,35 +163,118 @@ export default function ItemDetail() {
                 {/* Owner names need GET /users/{id} — roadmap A1. */}
               </Stack>
 
-              <View
-                style={{
-                  backgroundColor: theme.colors.surfaceAlt,
-                  borderRadius: theme.radius.md,
-                  padding: theme.space[4],
-                }}
-              >
-                <Row gap={3} align="flex-start">
-                  <Ionicons name="information-circle-outline" size={18} color={theme.colors.textMuted} />
-                  <Text variant="caption" color="textMuted" style={{ flex: 1 }}>
-                    {isMine
-                      ? 'Matches are found from your own listing. Open it from your profile to search for trades.'
-                      : 'To trade, list an item this owner wants — Lewe pairs you automatically when the interest is mutual.'}
-                  </Text>
-                </Row>
-              </View>
-
               {!isMine ? (
-                <Button
-                  title="List something to trade"
-                  block
-                  size="lg"
-                  onPress={() => router.push('/(tabs)/create')}
-                />
+                <Stack gap={3}>
+                  <Button
+                    title="Offer a trade"
+                    block
+                    size="lg"
+                    icon={
+                      <Ionicons name="swap-horizontal" size={19} color={theme.colors.onAccent} />
+                    }
+                    onPress={() => setOfferOpen(true)}
+                  />
+                  <Text variant="caption" color="textFaint" center>
+                    Offer something of yours directly — no need to list it first.
+                  </Text>
+                </Stack>
+              ) : (
+                <View
+                  style={{
+                    backgroundColor: theme.colors.surfaceAlt,
+                    borderRadius: theme.radius.md,
+                    padding: theme.space[4],
+                  }}
+                >
+                  <Row gap={3} align="flex-start">
+                    <Ionicons
+                      name="information-circle-outline"
+                      size={18}
+                      color={theme.colors.textMuted}
+                    />
+                    <Text variant="caption" color="textMuted" style={{ flex: 1 }}>
+                      This is your listing. Offers from other people show up in your matches.
+                    </Text>
+                  </Row>
+                </View>
+              )}
+
+              {/* Similar listings — the natural next thing to look at, and it
+                  keeps a dead end from being a dead end. */}
+              {similar && similar.items.length > 0 ? (
+                <Stack gap={3}>
+                  <Divider />
+                  <Row justify="space-between" align="center">
+                    <Text variant="heading">More like this</Text>
+                    <Text variant="caption" color="textFaint">
+                      {labelForCategory(item.category)}
+                    </Text>
+                  </Row>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: theme.space[3], paddingRight: theme.space[5] }}
+                    style={{ marginHorizontal: -theme.space[5], paddingHorizontal: theme.space[5] }}
+                  >
+                    {similar.items.map((s) => (
+                      <PressableScale
+                        key={s.id}
+                        scaleTo={0.96}
+                        onPress={() => router.push(`/item/${s.id}`)}
+                      >
+                        <Stack gap={2} style={{ width: 148 }}>
+                          <View
+                            style={{
+                              width: 148,
+                              height: 148,
+                              borderRadius: theme.radius.lg,
+                              overflow: 'hidden',
+                              backgroundColor: theme.colors.surfaceAlt,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {resolveImageUrl(s.images?.[0]) ? (
+                              <Image
+                                source={{ uri: resolveImageUrl(s.images?.[0]) }}
+                                style={{ width: '100%', height: '100%' }}
+                                contentFit="cover"
+                                transition={180}
+                              />
+                            ) : (
+                              <Ionicons
+                                name="image-outline"
+                                size={20}
+                                color={theme.colors.textFaint}
+                              />
+                            )}
+                          </View>
+                          <Text variant="caption" numberOfLines={1} style={{ fontWeight: '600' }}>
+                            {s.title}
+                          </Text>
+                          <Text variant="caption" color="textFaint" numberOfLines={1}>
+                            {labelForCondition(s.condition)}
+                          </Text>
+                        </Stack>
+                      </PressableScale>
+                    ))}
+                  </ScrollView>
+                </Stack>
               ) : null}
             </>
           ) : null}
         </Stack>
       </ScrollView>
+
+      {item && !isMine ? (
+        <OfferSheet
+          visible={offerOpen}
+          onClose={() => setOfferOpen(false)}
+          target={item}
+          onOffered={() => router.push('/(tabs)/matches')}
+        />
+      ) : null}
     </View>
   );
 }

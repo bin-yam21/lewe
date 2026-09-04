@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 
-import { items, ratings, type ItemQuery } from '@/api/endpoints';
+import { items, offers, ratings, type ItemQuery } from '@/api/endpoints';
 import type { CreateItemPayload, ItemList } from '@/api/types';
 
 const PER_PAGE = 20;
@@ -57,6 +57,52 @@ export function useUserRating(userId: string | undefined) {
     queryKey: ['rating', userId],
     queryFn: () => ratings.forUser(userId!),
     enabled: !!userId,
+  });
+}
+
+/** Other listings in the same category — shown under an item's detail. */
+export function useSimilarItems(id: string | undefined) {
+  return useQuery({
+    queryKey: ['items', 'similar', id],
+    queryFn: () => items.similar(id!),
+    enabled: !!id,
+    // Similarity is category-based and the feed changes slowly; no need to
+    // refetch this every time someone flicks back to a listing.
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** The items a user can put on the table: listed and active, or held private. */
+export function useOfferableItems() {
+  return useQuery({
+    queryKey: ['items', 'offerable'],
+    queryFn: async () => {
+      const [active, priv] = await Promise.all([
+        items.mine({ status: 'active', per_page: 50 }),
+        items.mine({ status: 'private', per_page: 50 }),
+      ]);
+      return [...active.items, ...priv.items];
+    },
+  });
+}
+
+export function useOfferTrade() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      targetItemId,
+      offerItemId,
+      message,
+    }: {
+      targetItemId: string;
+      offerItemId: string;
+      message?: string;
+    }) => offers.create(targetItemId, offerItemId, message),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['matches'] });
+      queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
   });
 }
 

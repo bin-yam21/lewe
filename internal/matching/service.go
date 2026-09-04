@@ -88,6 +88,66 @@ func (s *Service) FindMatchesForItem(ctx context.Context, userID, itemID pgtype.
 	}, nil
 }
 
+// OfferTrade proposes a swap directly to an item's owner.
+//
+// This is the path for someone browsing who sees something they want: rather
+// than publishing a listing and waiting for the mutual-wants query to pair
+// them, they hand over one of their own items right now. The offered item may
+// be private — never published to the feed at all.
+//
+// Everything downstream is unchanged: the offer is a pending match, so the
+// owner accepts or declines it, both sides confirm, and both sides rate.
+func (s *Service) OfferTrade(ctx context.Context, userID, targetItemID, offerItemID pgtype.UUID, message *string) (*MatchResponse, error) {
+	if targetItemID == offerItemID {
+		return nil, ErrInvalidOffer
+	}
+
+	target, _, err := s.itemRepo.GetByID(ctx, targetItemID)
+	if err != nil {
+		return nil, err
+	}
+	offered, _, err := s.itemRepo.GetByID(ctx, offerItemID)
+	if err != nil {
+		return nil, err
+	}
+
+	// You offer your own item, for someone else's.
+	if offered.UserID != userID {
+		return nil, items.ErrNotItemOwner
+	}
+	if target.UserID == userID {
+		return nil, ErrOwnItem
+	}
+
+	// The target has to still be available; the offered item has to be one the
+	// user can actually part with. "private" is allowed — that is the point.
+	if target.Status != "active" {
+		return nil, ErrItemUnavailable
+	}
+	if offered.Status != "active" && offered.Status != "private" {
+		return nil, ErrItemUnavailable
+	}
+
+	// An existing live match between these two items already covers this.
+	if existing, err := s.repo.FindBetween(ctx, offerItemID, targetItemID); err == nil {
+		mwi, err := s.repo.GetByID(ctx, existing.ID)
+		if err != nil {
+			return nil, err
+		}
+		resp := toMatchResponse(mwi)
+		return &resp, ErrOfferExists
+	} else if !errors.Is(err, ErrMatchNotFound) {
+		return nil, err
+	}
+
+	match, err := s.repo.CreateDirectOffer(ctx, offerItemID, targetItemID, message)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.freshResponse(ctx, match.ID)
+}
+
 // RespondToMatch accepts or declines a match. When accepting, the responder may
 // also propose (or change) the exchange method for the trade.
 func (s *Service) RespondToMatch(ctx context.Context, userID, matchID pgtype.UUID, req RespondRequest) (*MatchResponse, error) {
@@ -320,8 +380,12 @@ func toMatchResponse(mwi *MatchWithItems) MatchResponse {
 			Status:   mwi.ItemBStatus,
 		},
 		Status:     mwi.Match.Status,
+		Origin:     mwi.Match.Origin,
 		ConfirmedA: mwi.Match.ConfirmedA,
 		ConfirmedB: mwi.Match.ConfirmedB,
+	}
+	if mwi.Match.Message.Valid {
+		resp.Message = &mwi.Match.Message.String
 	}
 	if mwi.Match.ExchangeMethod.Valid {
 		resp.ExchangeMethod = &mwi.Match.ExchangeMethod.String

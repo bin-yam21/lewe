@@ -19,7 +19,7 @@ var (
 	// "archived" is deliberately excluded — archived items are soft-deleted
 	// and only their owner may list them.
 	publicStatuses = []string{"active", "matched", "exchanged"}
-	ownerStatuses  = []string{"active", "matched", "exchanged", "archived"}
+	ownerStatuses  = []string{"active", "matched", "exchanged", "archived", "private"}
 )
 
 // Service contains item business logic.
@@ -46,7 +46,10 @@ func (s *Service) CreateItem(ctx context.Context, userID pgtype.UUID, req Create
 	}
 	validator.ValidateOneOf(errs, "exchange_method", req.ExchangeMethod, allowedExchangeMethods)
 
-	if len(req.Wants) == 0 {
+	// A public listing has to say what it wants back — that is the whole
+	// matching mechanism. A private item is offered directly to one person, so
+	// there is nothing to match against and nothing to declare.
+	if !req.Private && len(req.Wants) == 0 {
 		errs["wants"] = "at least one want is required"
 	}
 	for i, w := range req.Wants {
@@ -63,13 +66,44 @@ func (s *Service) CreateItem(ctx context.Context, userID pgtype.UUID, req Create
 		req.Images = []string{}
 	}
 
-	item, wants, err := s.repo.Create(ctx, userID, req.Title, req.Description, req.Category, req.Condition, req.ExchangeMethod, req.Images, req.Location, req.Wants)
+	status := "active"
+	if req.Private {
+		status = "private"
+	}
+
+	item, wants, err := s.repo.Create(ctx, userID, req.Title, req.Description, req.Category, req.Condition, req.ExchangeMethod, status, req.Images, req.Location, req.Wants)
 	if err != nil {
 		return nil, err
 	}
 
 	resp := toItemResponse(item, wants)
 	return &resp, nil
+}
+
+// SimilarItems returns other people's active listings in the same category.
+func (s *Service) SimilarItems(ctx context.Context, itemID pgtype.UUID) (*ItemListResponse, error) {
+	const limit = 8
+
+	rows, err := s.repo.Similar(ctx, itemID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]ItemResponse, 0, len(rows))
+	for _, row := range rows {
+		wants, err := s.repo.getWantsByItemID(ctx, row.ID)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, toItemResponse(&row, wants))
+	}
+
+	return &ItemListResponse{
+		Items:   list,
+		Total:   len(list),
+		Page:    1,
+		PerPage: limit,
+	}, nil
 }
 
 // GetItem retrieves an item by ID.

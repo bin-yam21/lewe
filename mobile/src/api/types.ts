@@ -23,7 +23,8 @@ export type AuthResponse = {
 
 export type ItemCondition = 'new' | 'like_new' | 'good' | 'fair' | 'poor';
 export type ExchangeMethod = 'in_person' | 'shipping' | 'either';
-export type ItemStatus = 'active' | 'matched' | 'exchanged' | 'archived';
+/** "private" items exist to be offered directly; they never reach the feed. */
+export type ItemStatus = 'active' | 'matched' | 'exchanged' | 'archived' | 'private';
 
 export type Want = {
   id: string;
@@ -63,6 +64,31 @@ export type CreateItemPayload = {
   images?: string[];
   location?: string;
   wants: { category: string; description?: string }[];
+  /** Kept out of the browse feed — for offering directly to one person. */
+  private?: boolean;
+};
+
+export type MatchItemSummary = {
+  id: string;
+  user_id: string;
+  title: string;
+  category: string;
+  status: string;
+};
+
+/** A trade, whether found by the matcher or offered directly by someone. */
+export type Match = {
+  id: string;
+  item_a: MatchItemSummary;
+  item_b: MatchItemSummary;
+  origin: 'discovered' | 'direct';
+  message?: string;
+  status: 'pending' | 'accepted_a' | 'accepted_b' | 'confirmed' | 'completed' | 'cancelled';
+  exchange_method?: 'in_person' | 'shipping';
+  confirmed_a: boolean;
+  confirmed_b: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type UserRating = {

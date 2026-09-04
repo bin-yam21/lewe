@@ -42,12 +42,22 @@ export function PhotoPicker({
 
   async function pick(from: 'library' | 'camera') {
     try {
-      if (from === 'camera') {
-        const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) {
-          Alert.alert('Camera access needed', 'Allow camera access to photograph your item.');
-          return;
-        }
+      // Both permissions have to be asked for explicitly. Without the media
+      // library request the picker simply returns "canceled" on Android, which
+      // looks to the user like tapping the button does nothing at all.
+      const perm =
+        from === 'camera'
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!perm.granted) {
+        Alert.alert(
+          from === 'camera' ? 'Camera access needed' : 'Photo access needed',
+          from === 'camera'
+            ? 'Allow camera access so you can photograph your item.'
+            : 'Allow photo access so you can choose pictures of your item.',
+        );
+        return;
       }
 
       const options: ImagePicker.ImagePickerOptions = {
@@ -81,17 +91,26 @@ export function PhotoPicker({
       for (const asset of assets) {
         try {
           urls.push(await uploads.image(asset.uri, asset.mimeType ?? 'image/jpeg'));
-        } catch {
-          Alert.alert('Upload failed', 'That photo could not be uploaded. Please try again.');
+        } catch (e) {
+          // Show what actually went wrong. A generic "try again" hides the two
+          // things that really happen here — the API being unreachable from the
+          // phone, and a rejected file type.
+          Alert.alert(
+            'Upload failed',
+            e instanceof Error ? e.message : 'That photo could not be uploaded.',
+          );
         } finally {
           setUploading((n) => Math.max(0, n - 1));
         }
       }
 
       if (urls.length) onChange([...value, ...urls]);
-    } catch {
+    } catch (e) {
       setUploading(0);
-      Alert.alert('Something went wrong', 'Could not open your photos.');
+      Alert.alert(
+        'Could not open your photos',
+        e instanceof Error ? e.message : 'Something went wrong.',
+      );
     }
   }
 

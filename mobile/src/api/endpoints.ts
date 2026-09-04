@@ -4,6 +4,7 @@ import type {
   CreateItemPayload,
   Item,
   ItemList,
+  Match,
   User,
   UserRating,
 } from './types';
@@ -63,6 +64,37 @@ export const items = {
     api.put<Item>(`/items/${id}`, payload),
 
   archive: (id: string) => api.delete<{ message: string }>(`/items/${id}`),
+
+  /** Other people's active listings in the same category. */
+  similar: (id: string) => api.get<ItemList>(`/items/${id}/similar`),
+};
+
+export const offers = {
+  /**
+   * Offer one of your items for someone else's, without waiting for the
+   * matcher to pair you. The result is an ordinary pending match.
+   */
+  create: (targetItemId: string, offerItemId: string, message?: string) =>
+    api.post<Match>(`/items/${targetItemId}/offers`, {
+      offer_item_id: offerItemId,
+      message: message?.trim() || undefined,
+    }),
+};
+
+export const matches = {
+  mine: () => api.get<{ matches: Match[] }>('/matches'),
+  get: (id: string) => api.get<Match>(`/matches/${id}`),
+
+  respond: (id: string, accept: boolean, exchangeMethod?: 'in_person' | 'shipping') =>
+    api.post<Match>(`/matches/${id}/respond`, {
+      accept,
+      exchange_method: exchangeMethod,
+    }),
+
+  /** Marks your side of the exchange done; completes when both sides have. */
+  complete: (id: string) => api.post<Match>(`/matches/${id}/complete`),
+
+  cancel: (id: string) => api.post<Match>(`/matches/${id}/cancel`),
 };
 
 export const ratings = {

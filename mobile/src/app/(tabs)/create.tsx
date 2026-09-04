@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,12 +22,12 @@ import { Text } from '@/components/Text';
 import { PhotoPicker } from '@/components/PhotoPicker';
 import { Chip } from '@/components/feedback';
 import { Divider, Row, Stack } from '@/components/layout';
-import { useCreateItem } from '@/hooks/useItems';
+import { useCreateItem, useOfferTrade } from '@/hooks/useItems';
 import { useTheme } from '@/theme';
 
 type Step = 'photos' | 'details' | 'wants' | 'review';
 
-const STEPS: { key: Step; label: string }[] = [
+const ALL_STEPS: { key: Step; label: string }[] = [
   { key: 'photos', label: 'Photos' },
   { key: 'details', label: 'Item' },
   { key: 'wants', label: 'Wants' },
@@ -39,6 +39,13 @@ export default function CreateListing() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const createItem = useCreateItem();
+  const offerTrade = useOfferTrade();
+
+  // Reached from an item's "offer something not listed" action. The item is
+  // created private — never published to the feed — and offered immediately.
+  const params = useLocalSearchParams<{ private?: string; offerFor?: string }>();
+  const isPrivate = params.private === '1';
+  const offerFor = params.offerFor;
 
   const [step, setStep] = useState<Step>('photos');
 
@@ -69,6 +76,10 @@ export default function CreateListing() {
     title.trim().length > 0 && description.trim().length > 0 && !!category;
   const wantsValid = wantCategories.length > 0;
 
+  // A private item is offered to one person, so there is nothing to match
+  // against and no wants to declare.
+  const STEPS = isPrivate ? ALL_STEPS.filter((s) => s.key !== 'wants') : ALL_STEPS;
+
   function reset() {
     setImages([]);
     setTitle('');
@@ -91,7 +102,7 @@ export default function CreateListing() {
   }
 
   async function onPublish() {
-    if (!detailsValid || !wantsValid) return;
+    if (!detailsValid || (!isPrivate && !wantsValid)) return;
     setError(null);
     setFields({});
 
@@ -104,13 +115,29 @@ export default function CreateListing() {
         exchange_method: exchangeMethod,
         location: location.trim() || undefined,
         images,
-        wants: wantCategories.map((c, i) => ({
-          category: c,
-          // The note applies to the listing as a whole; attach it to the first
-          // want, which is where the API expects free-text detail.
-          description: i === 0 && wantNote.trim() ? wantNote.trim() : undefined,
-        })),
+        private: isPrivate || undefined,
+        wants: isPrivate
+          ? []
+          : wantCategories.map((c, i) => ({
+              category: c,
+              // The note applies to the listing as a whole; attach it to the
+              // first want, which is where the API expects free-text detail.
+              description: i === 0 && wantNote.trim() ? wantNote.trim() : undefined,
+            })),
       });
+
+      // Came here to offer something specific — send it straight away rather
+      // than making the user find their way back to the listing.
+      if (offerFor) {
+        await offerTrade.mutateAsync({
+          targetItemId: offerFor,
+          offerItemId: created.id,
+          message: wantNote.trim() || undefined,
+        });
+        reset();
+        router.replace('/(tabs)/matches');
+        return;
+      }
 
       reset();
       router.push(`/item/${created.id}`);
@@ -135,7 +162,14 @@ export default function CreateListing() {
         showsVerticalScrollIndicator={false}
       >
         <Stack gap={4}>
-          <Text variant="title">List an item</Text>
+          <Stack gap={1}>
+            <Text variant="title">{isPrivate ? 'Offer an item' : 'List an item'}</Text>
+            {isPrivate ? (
+              <Text variant="caption" color="textMuted">
+                Kept off the browse feed — only the person you offer it to will see it.
+              </Text>
+            ) : null}
+          </Stack>
 
           {/* Step indicator — a plain progress rail, no wizard chrome. */}
           <Row gap={2}>
@@ -283,11 +317,11 @@ export default function CreateListing() {
             <Row gap={3}>
               <Button title="Back" variant="secondary" size="lg" onPress={() => setStep('photos')} />
               <Button
-                title="Continue"
+                title={isPrivate ? 'Review' : 'Continue'}
                 size="lg"
                 style={{ flex: 1 }}
                 disabled={!detailsValid}
-                onPress={() => setStep('wants')}
+                onPress={() => setStep(isPrivate ? 'review' : 'wants')}
               />
             </Row>
           </Stack>
@@ -414,12 +448,17 @@ export default function CreateListing() {
             </Stack>
 
             <Row gap={3}>
-              <Button title="Back" variant="secondary" size="lg" onPress={() => setStep('wants')} />
               <Button
-                title="Publish listing"
+                title="Back"
+                variant="secondary"
+                size="lg"
+                onPress={() => setStep(isPrivate ? 'details' : 'wants')}
+              />
+              <Button
+                title={offerFor ? 'Send offer' : isPrivate ? 'Save privately' : 'Publish listing'}
                 size="lg"
                 style={{ flex: 1 }}
-                loading={createItem.isPending}
+                loading={createItem.isPending || offerTrade.isPending}
                 onPress={onPublish}
               />
             </Row>

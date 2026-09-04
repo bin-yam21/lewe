@@ -29,6 +29,7 @@ func New(userHandler *users.Handler, itemHandler *items.Handler, matchHandler *m
 	// --- Public item routes ---
 	mux.HandleFunc("GET /api/v1/items", itemHandler.List)
 	mux.HandleFunc("GET /api/v1/items/{id}", itemHandler.Get)
+	mux.HandleFunc("GET /api/v1/items/{id}/similar", itemHandler.Similar)
 
 	// --- Protected item routes ---
 	mux.Handle("POST /api/v1/items", authMW(http.HandlerFunc(itemHandler.Create)))
@@ -38,6 +39,7 @@ func New(userHandler *users.Handler, itemHandler *items.Handler, matchHandler *m
 
 	// --- Protected matching routes ---
 	mux.Handle("POST /api/v1/items/{id}/matches", authMW(http.HandlerFunc(matchHandler.FindMatches)))
+	mux.Handle("POST /api/v1/items/{id}/offers", authMW(http.HandlerFunc(matchHandler.Offer)))
 	mux.Handle("GET /api/v1/matches", authMW(http.HandlerFunc(matchHandler.ListMine)))
 	mux.Handle("GET /api/v1/matches/{id}", authMW(http.HandlerFunc(matchHandler.Get)))
 	mux.Handle("POST /api/v1/matches/{id}/respond", authMW(http.HandlerFunc(matchHandler.Respond)))

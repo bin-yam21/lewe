@@ -49,6 +49,19 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="matches"
+        options={{
+          title: 'Trades',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? 'swap-horizontal' : 'swap-horizontal-outline'}
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',

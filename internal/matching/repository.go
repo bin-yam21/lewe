@@ -15,6 +15,11 @@ var (
 	ErrNotMatchParty     = errors.New("not a participant in this match")
 	ErrInvalidTransition = errors.New("invalid match status transition")
 	ErrAlreadyMatched    = errors.New("match already exists between these items")
+
+	ErrInvalidOffer    = errors.New("cannot offer an item for itself")
+	ErrOwnItem         = errors.New("cannot offer a trade on your own item")
+	ErrItemUnavailable = errors.New("item is not available to trade")
+	ErrOfferExists     = errors.New("a trade between these items already exists")
 )
 
 // MatchRow represents a match row from the database.
@@ -26,8 +31,11 @@ type MatchRow struct {
 	ExchangeMethod pgtype.Text
 	ConfirmedA     bool
 	ConfirmedB     bool
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	/** "discovered" by the mutual-wants query, or "direct" if someone offered. */
+	Origin    string
+	Message   pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
 // MatchWithItems is a match joined with item summaries.
@@ -64,7 +72,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 func (r *Repository) FindMatches(ctx context.Context, itemID, userID pgtype.UUID) ([]MatchWithItems, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT
-			m.id, m.item_a_id, m.item_b_id, m.status, m.exchange_method, m.confirmed_a, m.confirmed_b, m.created_at, m.updated_at,
+			m.id, m.item_a_id, m.item_b_id, m.status, m.exchange_method, m.confirmed_a, m.confirmed_b, m.origin, m.message, m.created_at, m.updated_at,
 			ia.user_id, ia.title, ia.category, ia.status,
 			ib.user_id, ib.title, ib.category, ib.status
 		 FROM matches m
@@ -125,13 +133,57 @@ func (r *Repository) CreateMatch(ctx context.Context, itemAID, itemBID pgtype.UU
 		`INSERT INTO matches (item_a_id, item_b_id)
 		 VALUES ($1, $2)
 		 ON CONFLICT (item_a_id, item_b_id) DO UPDATE SET updated_at = now()
-		 RETURNING id, item_a_id, item_b_id, status, exchange_method, confirmed_a, confirmed_b, created_at, updated_at`,
+		 RETURNING id, item_a_id, item_b_id, status, exchange_method, confirmed_a, confirmed_b, origin, message, created_at, updated_at`,
 		itemAID, itemBID,
 	).Scan(
 		&m.ID, &m.ItemAID, &m.ItemBID, &m.Status, &m.ExchangeMethod,
-		&m.ConfirmedA, &m.ConfirmedB, &m.CreatedAt, &m.UpdatedAt,
+		&m.ConfirmedA, &m.ConfirmedB, &m.Origin, &m.Message, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// CreateDirectOffer records a trade proposed straight to an owner.
+//
+// item_a is always the offered item and item_b the item being asked for, which
+// keeps "who approached whom" readable from the row alone.
+func (r *Repository) CreateDirectOffer(ctx context.Context, offerItemID, targetItemID pgtype.UUID, message *string) (*MatchRow, error) {
+	m := &MatchRow{}
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO matches (item_a_id, item_b_id, origin, message)
+		 VALUES ($1, $2, 'direct', $3)
+		 RETURNING id, item_a_id, item_b_id, status, exchange_method, confirmed_a, confirmed_b, origin, message, created_at, updated_at`,
+		offerItemID, targetItemID, message,
+	).Scan(
+		&m.ID, &m.ItemAID, &m.ItemBID, &m.Status, &m.ExchangeMethod,
+		&m.ConfirmedA, &m.ConfirmedB, &m.Origin, &m.Message, &m.CreatedAt, &m.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// FindBetween returns a live match between two items in either direction.
+func (r *Repository) FindBetween(ctx context.Context, itemX, itemY pgtype.UUID) (*MatchRow, error) {
+	m := &MatchRow{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, item_a_id, item_b_id, status, exchange_method, confirmed_a, confirmed_b, origin, message, created_at, updated_at
+		 FROM matches
+		 WHERE ((item_a_id = $1 AND item_b_id = $2) OR (item_a_id = $2 AND item_b_id = $1))
+		   AND status != 'cancelled'
+		 LIMIT 1`,
+		itemX, itemY,
+	).Scan(
+		&m.ID, &m.ItemAID, &m.ItemBID, &m.Status, &m.ExchangeMethod,
+		&m.ConfirmedA, &m.ConfirmedB, &m.Origin, &m.Message, &m.CreatedAt, &m.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrMatchNotFound
+		}
 		return nil, err
 	}
 	return m, nil
@@ -142,7 +194,7 @@ func (r *Repository) GetByID(ctx context.Context, id pgtype.UUID) (*MatchWithIte
 	mwi := &MatchWithItems{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT
-			m.id, m.item_a_id, m.item_b_id, m.status, m.exchange_method, m.confirmed_a, m.confirmed_b, m.created_at, m.updated_at,
+			m.id, m.item_a_id, m.item_b_id, m.status, m.exchange_method, m.confirmed_a, m.confirmed_b, m.origin, m.message, m.created_at, m.updated_at,
 			ia.user_id, ia.title, ia.category, ia.status,
 			ib.user_id, ib.title, ib.category, ib.status
 		 FROM matches m
@@ -153,6 +205,7 @@ func (r *Repository) GetByID(ctx context.Context, id pgtype.UUID) (*MatchWithIte
 	).Scan(
 		&mwi.Match.ID, &mwi.Match.ItemAID, &mwi.Match.ItemBID, &mwi.Match.Status,
 		&mwi.Match.ExchangeMethod, &mwi.Match.ConfirmedA, &mwi.Match.ConfirmedB,
+		&mwi.Match.Origin, &mwi.Match.Message,
 		&mwi.Match.CreatedAt, &mwi.Match.UpdatedAt,
 		&mwi.ItemAUserID, &mwi.ItemATitle, &mwi.ItemACategory, &mwi.ItemAStatus,
 		&mwi.ItemBUserID, &mwi.ItemBTitle, &mwi.ItemBCategory, &mwi.ItemBStatus,
@@ -170,7 +223,7 @@ func (r *Repository) GetByID(ctx context.Context, id pgtype.UUID) (*MatchWithIte
 func (r *Repository) ListForUser(ctx context.Context, userID pgtype.UUID) ([]MatchWithItems, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT
-			m.id, m.item_a_id, m.item_b_id, m.status, m.exchange_method, m.confirmed_a, m.confirmed_b, m.created_at, m.updated_at,
+			m.id, m.item_a_id, m.item_b_id, m.status, m.exchange_method, m.confirmed_a, m.confirmed_b, m.origin, m.message, m.created_at, m.updated_at,
 			ia.user_id, ia.title, ia.category, ia.status,
 			ib.user_id, ib.title, ib.category, ib.status
 		 FROM matches m
@@ -265,6 +318,7 @@ func scanMatchWithItems(rows pgx.Rows) ([]MatchWithItems, error) {
 		if err := rows.Scan(
 			&mwi.Match.ID, &mwi.Match.ItemAID, &mwi.Match.ItemBID, &mwi.Match.Status,
 			&mwi.Match.ExchangeMethod, &mwi.Match.ConfirmedA, &mwi.Match.ConfirmedB,
+			&mwi.Match.Origin, &mwi.Match.Message,
 			&mwi.Match.CreatedAt, &mwi.Match.UpdatedAt,
 			&mwi.ItemAUserID, &mwi.ItemATitle, &mwi.ItemACategory, &mwi.ItemAStatus,
 			&mwi.ItemBUserID, &mwi.ItemBTitle, &mwi.ItemBCategory, &mwi.ItemBStatus,

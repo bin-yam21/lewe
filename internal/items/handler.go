@@ -63,6 +63,23 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, item)
 }
 
+// Similar handles GET /api/v1/items/{id}/similar
+func (h *Handler) Similar(w http.ResponseWriter, r *http.Request) {
+	itemID, err := parsePathUUID(r, "id")
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid item ID")
+		return
+	}
+
+	result, err := h.svc.SimilarItems(r.Context(), itemID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	response.JSON(w, http.StatusOK, result)
+}
+
 // Update handles PUT /api/v1/items/{id}
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.UserIDFromContext(r.Context())
