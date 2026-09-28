@@ -1,26 +1,46 @@
 package db
 
 import (
+	"embed"
 	"errors"
-	"log"
+	"fmt"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
-// RunMigrations applies all pending up-migrations.
-// migrationsPath should be a file:// URL pointing to the migrations directory.
-func RunMigrations(databaseURL, migrationsPath string) {
-	m, err := migrate.New(migrationsPath, databaseURL)
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+// RunMigrations applies all pending up-migrations. The SQL files are embedded
+// in the binary, so the server can be started from any working directory.
+func RunMigrations(databaseURL string) error {
+	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
-		log.Fatalf("Failed to create migrate instance: %v", err)
+		return fmt.Errorf("load migrations: %w", err)
+	}
+
+	m, err := migrate.NewWithSourceInstance("iofs", src, migrateURL(databaseURL))
+	if err != nil {
+		return fmt.Errorf("create migrate instance: %w", err)
 	}
 	defer m.Close()
 
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		log.Fatalf("Migration failed: %v", err)
+		return fmt.Errorf("apply migrations: %w", err)
 	}
+	return nil
+}
 
-	log.Println("Migrations applied successfully")
+// migrateURL rewrites a postgres:// URL to the pgx5:// scheme that the
+// golang-migrate pgx/v5 driver registers itself under.
+func migrateURL(databaseURL string) string {
+	for _, prefix := range []string{"postgres://", "postgresql://"} {
+		if strings.HasPrefix(databaseURL, prefix) {
+			return "pgx5://" + strings.TrimPrefix(databaseURL, prefix)
+		}
+	}
+	return databaseURL
 }

@@ -51,3 +51,20 @@ type UserResponse struct {
 	AvatarURL *string   `json:"avatar_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// PublicProfileResponse is the representation of a user visible to anyone.
+type PublicProfileResponse struct {
+	ID        string        `json:"id"`
+	FullName  string        `json:"full_name"`
+	Location  *string       `json:"location,omitempty"`
+	Bio       *string       `json:"bio,omitempty"`
+	AvatarURL *string       `json:"avatar_url,omitempty"`
+	Rating    RatingSummary `json:"rating"`
+	CreatedAt time.Time     `json:"created_at"`
+}
+
+// RatingSummary aggregates the ratings a user has received.
+type RatingSummary struct {
+	Average float64 `json:"average"`
+	Count   int     `json:"count"`
+}

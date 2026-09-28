@@ -1,13 +1,11 @@
 package users
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/yeabt/lewe/internal/middleware"
+	"github.com/yeabt/lewe/internal/request"
 	"github.com/yeabt/lewe/internal/response"
 	"github.com/yeabt/lewe/internal/validator"
 )
@@ -25,7 +23,7 @@ func NewHandler(svc *Service) *Handler {
 // Register handles POST /api/v1/auth/register
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := request.DecodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -42,7 +40,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 // Login handles POST /api/v1/auth/login
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := request.DecodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -59,7 +57,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 // RefreshToken handles POST /api/v1/auth/refresh
 func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := request.DecodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -71,6 +69,37 @@ func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.JSON(w, http.StatusOK, authResp)
+}
+
+// Logout handles POST /api/v1/auth/logout
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	var req RefreshRequest
+	if err := request.DecodeJSON(w, r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := h.svc.Logout(r.Context(), req.RefreshToken); err != nil {
+		h.handleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetPublicProfile handles GET /api/v1/users/{id}
+func (h *Handler) GetPublicProfile(w http.ResponseWriter, r *http.Request) {
+	id, err := request.PathUUID(r, "id")
+	if err != nil {
+		response.Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	profile, err := h.svc.GetPublicProfile(r.Context(), id)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, profile)
 }
 
 // GetProfile handles GET /api/v1/users/me
@@ -99,7 +128,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := request.DecodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -117,10 +146,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleError(w http.ResponseWriter, err error) {
 	var validationErrs validator.Errors
 	if errors.As(err, &validationErrs) {
-		response.JSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"error":  "Validation failed",
-			"fields": validationErrs,
-		})
+		response.ValidationError(w, validationErrs)
 		return
 	}
 
@@ -134,13 +160,6 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrUserNotFound):
 		response.Error(w, http.StatusNotFound, "User not found")
 	default:
-		response.Error(w, http.StatusInternalServerError, "Internal server error")
+		response.InternalError(w, err)
 	}
-}
-
-// parseUUID parses a string into a pgtype.UUID.
-func parseUUID(s string) (pgtype.UUID, error) {
-	var id pgtype.UUID
-	err := id.Scan(s)
-	return id, err
 }

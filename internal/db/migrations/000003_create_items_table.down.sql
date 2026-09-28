@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS items;
+DROP FUNCTION IF EXISTS item_condition_rank(TEXT);

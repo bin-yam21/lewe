@@ -23,37 +23,53 @@ const userIDKey contextKey = "userID"
 func Auth(jwtSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract token from Authorization header
-			header := r.Header.Get("Authorization")
-			if header == "" {
-				response.Error(w, http.StatusUnauthorized, "Missing authorization header")
+			userID, msg := authenticate(r, jwtSecret)
+			if msg != "" {
+				response.Error(w, http.StatusUnauthorized, msg)
 				return
 			}
-
-			parts := strings.SplitN(header, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				response.Error(w, http.StatusUnauthorized, "Invalid authorization header format")
-				return
-			}
-
-			// Validate the JWT
-			claims, err := auth.ValidateAccessToken(parts[1], jwtSecret)
-			if err != nil {
-				response.Error(w, http.StatusUnauthorized, "Invalid or expired token")
-				return
-			}
-
-			// Parse the user ID from claims and inject into context
-			var userID pgtype.UUID
-			if err := userID.Scan(claims.UserID); err != nil {
-				response.Error(w, http.StatusUnauthorized, "Invalid token claims")
-				return
-			}
-
 			ctx := context.WithValue(r.Context(), userIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// OptionalAuth injects the user ID when a valid access token is supplied, but
+// lets anonymous requests (or ones with a bad token) through unauthenticated.
+func OptionalAuth(jwtSecret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if userID, msg := authenticate(r, jwtSecret); msg == "" {
+				r = r.WithContext(context.WithValue(r.Context(), userIDKey, userID))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// authenticate extracts and validates the bearer token. It returns a non-empty
+// message describing the failure when the request is not authenticated.
+func authenticate(r *http.Request, jwtSecret string) (pgtype.UUID, string) {
+	header := r.Header.Get("Authorization")
+	if header == "" {
+		return pgtype.UUID{}, "Missing authorization header"
+	}
+
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return pgtype.UUID{}, "Invalid authorization header format"
+	}
+
+	claims, err := auth.ValidateAccessToken(parts[1], jwtSecret)
+	if err != nil {
+		return pgtype.UUID{}, "Invalid or expired token"
+	}
+
+	var userID pgtype.UUID
+	if err := userID.Scan(claims.UserID); err != nil {
+		return pgtype.UUID{}, "Invalid token claims"
+	}
+	return userID, ""
 }
 
 // UserIDFromContext extracts the authenticated user's UUID from the request context.

@@ -56,3 +56,20 @@ func ValidateMaxLength(errs Errors, field, value string, max int) {
 		errs[field] = fmt.Sprintf("must be at most %d characters", max)
 	}
 }
+
+// ValidateOneOf checks that value is one of the allowed options.
+func ValidateOneOf(errs Errors, field, value string, allowed []string) {
+	for _, a := range allowed {
+		if value == a {
+			return
+		}
+	}
+	errs[field] = fmt.Sprintf("must be one of: %s", strings.Join(allowed, ", "))
+}
+
+// ValidateRange checks that an integer lies within [lo, hi].
+func ValidateRange(errs Errors, field string, value, lo, hi int) {
+	if value < lo || value > hi {
+		errs[field] = fmt.Sprintf("must be between %d and %d", lo, hi)
+	}
+}

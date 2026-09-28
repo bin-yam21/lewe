@@ -31,3 +31,24 @@ func Error(w http.ResponseWriter, status int, message string) {
 		Message: message,
 	})
 }
+
+// List is the standard envelope for paginated collection responses.
+type List[T any] struct {
+	Data   []T `json:"data"`
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+// ValidationError writes a 422 response with per-field messages.
+func ValidationError(w http.ResponseWriter, fields map[string]string) {
+	JSON(w, http.StatusUnprocessableEntity, map[string]any{
+		"error":  "Validation failed",
+		"fields": fields,
+	})
+}
+
+// InternalError logs the underlying error and writes a generic 500 response.
+func InternalError(w http.ResponseWriter, err error) {
+	log.Printf("internal error: %v", err)
+	Error(w, http.StatusInternalServerError, "Internal server error")
+}
