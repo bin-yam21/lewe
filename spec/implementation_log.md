@@ -63,3 +63,77 @@ internal/validator/         → Lightweight input validation
 ### What's Next
 
 Phase 1 — Core Exchange Loop: item listings, wants specification, matching worker, match confirmation, exchange method selection, basic ratings.
+
+---
+
+## Phase 1 — Core Exchange Loop (2026-09-28)
+
+### What Was Built
+
+Item listings, wants, a background matching worker, the match lifecycle
+(accept/decline → exchange method → completion/cancel) and ratings. Plus
+fixes to Phase 0, end-to-end tests, Docker, CI and a README.
+
+### New Packages
+
+```
+internal/app/       → Wiring (repo → service → handler) shared by main and tests
+internal/catalog/   → Fixed categories, conditions, exchange methods
+internal/items/     → Listings: CRUD, public browse/search, soft delete (withdraw)
+internal/wants/     → What a user is looking for: category, keywords, min condition
+internal/matches/   → Match state machine + matching worker
+internal/ratings/   → 1–5 ratings after a completed match
+internal/request/   → Body decoding (1 MiB cap), UUID path params, pagination
+```
+
+### Database Schema
+
+**items**: owner, title, description, category, condition, estimated_value, location, image_urls, status (`available`/`reserved`/`exchanged`/`withdrawn`)
+
+**wants**: user, category, keywords[], min_condition, status (`active`/`fulfilled`/`cancelled`)
+
+**matches**: user/item/want for sides A and B, score, status (`pending`/`accepted`/`completed`/`declined`/`cancelled`), per-side accepted/completed timestamps, exchange method/details/proposer, closed_by. `CHECK (item_a_id < item_b_id)` + `UNIQUE (item_a_id, item_b_id)`.
+
+**ratings**: match, rater, ratee, score 1–5, comment. `UNIQUE (match_id, rater_id)`.
+
+`item_condition_rank(text)` is an immutable SQL function ordering conditions so wants can set a minimum.
+
+### Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Matching as one SQL statement** | `INSERT … SELECT` joins wants to items twice to find reciprocal pairs. Postgres does the work in one round trip and `ON CONFLICT DO NOTHING` makes passes idempotent |
+| **Canonical pair ordering** | Every swap is found from both sides; keeping only `item_a_id < item_b_id` dedupes it and lets a unique constraint stop repeat suggestions — including of declined/cancelled pairs |
+| **Worker = ticker + trigger** | Runs every `MATCH_INTERVAL`, and immediately (debounced) after an item or want is created/updated so users see matches quickly |
+| **Row locks for state changes** | Every match transition locks the match `FOR UPDATE`; accepting also locks both items in id order, so two matches can't reserve the same item |
+| **Reserve on accept, cancel competitors** | Once both accept, both items become `reserved` and every other pending match involving them is cancelled |
+| **Changing the exchange plan resets completion** | A confirmation applied to the old plan; both sides must confirm again |
+| **Viewer-relative match responses** | `your_item`/`their_item` spares clients from working out which side they are |
+| **Fixed category list** | Matching needs exact category equality; free text would fragment |
+| **Soft delete for items and wants** | Matches and ratings keep referring to them |
+
+### Phase 0 Fixes
+
+- **Migrations never ran against a `postgres://` URL**: golang-migrate's pgx v5 driver only registers `pgx5://`. The URL is now rewritten, and migrations are embedded with `go:embed` so the binary works from any directory.
+- **Refresh-token reuse race**: lookup and revoke were two statements, so two concurrent requests could redeem one token. It is now one `UPDATE … RETURNING`.
+- Emails are trimmed and lower-cased (they were case-sensitive).
+- Passwords over 72 bytes are rejected (bcrypt can't hash them).
+- Added `POST /auth/logout` and public profiles with a rating summary.
+- Request bodies are capped at 1 MiB; handler panics return a 500 instead of dropping the connection; 500s log the underlying error.
+
+### Verification
+
+- `go build ./...`, `go vet ./...`, `gofmt` — ✅
+- Unit tests (validator, JWT, request helpers, migration URL) — ✅
+- End-to-end tests against PostgreSQL 16 (`go test -race ./...`) covering auth, items, wants, the full match lifecycle, decline/cancel/withdraw and races with item availability — ✅
+- Manual smoke test of the built binary: migrations, the worker finding a match right after a want is created, graceful shutdown — ✅
+- All down migrations tested in reverse order — ✅
+
+### Not Done / Possible Next Steps
+
+- Image upload (items take image URLs only)
+- Notifications (email/push) when a match is found or changes
+- Messaging between matched users
+- Multi-party (A→B→C→A) cycles; matching is two-way only
+- Rate limiting on auth endpoints
+- The sqlc query files still cover only users and refresh tokens; repositories use pgx directly

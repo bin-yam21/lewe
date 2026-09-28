@@ -7,6 +7,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/yeabt/lewe/internal/db"
 )
 
 var (
@@ -55,7 +57,7 @@ func (r *Repository) Create(ctx context.Context, email, passwordHash, fullName s
 	)
 	if err != nil {
 		// Check for unique constraint violation on email
-		if isDuplicateKeyError(err) {
+		if db.IsUniqueViolation(err) {
 			return nil, ErrEmailTaken
 		}
 		return nil, err
@@ -134,12 +136,10 @@ func (r *Repository) Update(ctx context.Context, id pgtype.UUID, fullName string
 	return user, nil
 }
 
-// isDuplicateKeyError checks if a pgx error is a unique constraint violation (code 23505).
-func isDuplicateKeyError(err error) bool {
-	// pgx wraps errors; check the error message for the PG error code
-	var pgErr interface{ SQLState() string }
-	if errors.As(err, &pgErr) {
-		return pgErr.SQLState() == "23505"
-	}
-	return false
+// RatingSummary returns the average score and number of ratings a user has received.
+func (r *Repository) RatingSummary(ctx context.Context, id pgtype.UUID) (average float64, count int, err error) {
+	err = r.pool.QueryRow(ctx,
+		`SELECT COALESCE(AVG(score), 0)::float8, COUNT(*) FROM ratings WHERE ratee_id = $1`, id,
+	).Scan(&average, &count)
+	return average, count, err
 }

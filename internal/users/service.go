@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,7 +17,7 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid email or password")
+	ErrInvalidCredentials  = errors.New("invalid email or password")
 	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 )
 
@@ -37,12 +39,18 @@ func NewService(repo *Repository, tokenRepo *RefreshTokenRepository, jwtSecret s
 
 // Register creates a new user account and returns auth tokens.
 func (s *Service) Register(ctx context.Context, req RegisterRequest) (*AuthResponse, error) {
+	req.Email = normalizeEmail(req.Email)
+	req.FullName = strings.TrimSpace(req.FullName)
+
 	// Validate input
 	errs := make(validator.Errors)
 	validator.ValidateEmail(errs, "email", req.Email)
 	validator.ValidateRequired(errs, "full_name", req.FullName)
+	validator.ValidateMaxLength(errs, "full_name", req.FullName, 100)
 	validator.ValidateRequired(errs, "password", req.Password)
 	validator.ValidateMinLength(errs, "password", req.Password, 8)
+	// bcrypt ignores everything past 72 bytes (and rejects longer input).
+	validator.ValidateMaxLength(errs, "password", req.Password, 72)
 	if errs.HasErrors() {
 		return nil, errs
 	}
@@ -65,6 +73,8 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (*AuthRespo
 
 // Login authenticates a user and returns auth tokens.
 func (s *Service) Login(ctx context.Context, req LoginRequest) (*AuthResponse, error) {
+	req.Email = normalizeEmail(req.Email)
+
 	// Validate input
 	errs := make(validator.Errors)
 	validator.ValidateEmail(errs, "email", req.Email)
@@ -97,28 +107,56 @@ func (s *Service) RefreshToken(ctx context.Context, refreshTokenStr string) (*Au
 		return nil, ErrInvalidRefreshToken
 	}
 
-	// Hash the incoming token to look it up
-	tokenHash := hashToken(refreshTokenStr)
-
-	// Find valid token in DB
-	rt, err := s.tokenRepo.GetByHash(ctx, tokenHash)
+	// Revoke the presented token and learn its owner in one step (rotation)
+	userID, err := s.tokenRepo.Consume(ctx, hashToken(refreshTokenStr))
 	if err != nil {
-		return nil, ErrInvalidRefreshToken
-	}
-
-	// Revoke the old refresh token (rotation)
-	if err := s.tokenRepo.Revoke(ctx, tokenHash); err != nil {
 		return nil, err
 	}
 
 	// Get the user
-	user, err := s.repo.GetByID(ctx, rt.UserID)
+	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Issue fresh token pair
 	return s.generateAuthResponse(ctx, user)
+}
+
+// Logout revokes the given refresh token. Unknown or already-revoked tokens
+// are ignored so the call is idempotent.
+func (s *Service) Logout(ctx context.Context, refreshTokenStr string) error {
+	if refreshTokenStr == "" {
+		return nil
+	}
+	_, err := s.tokenRepo.Consume(ctx, hashToken(refreshTokenStr))
+	if err != nil && !errors.Is(err, ErrInvalidRefreshToken) {
+		return err
+	}
+	return nil
+}
+
+// GetPublicProfile returns the publicly visible profile of any user.
+func (s *Service) GetPublicProfile(ctx context.Context, userID pgtype.UUID) (*PublicProfileResponse, error) {
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	avg, count, err := s.repo.RatingSummary(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	full := toUserResponse(user)
+	return &PublicProfileResponse{
+		ID:        full.ID,
+		FullName:  full.FullName,
+		Location:  full.Location,
+		Bio:       full.Bio,
+		AvatarURL: full.AvatarURL,
+		Rating:    RatingSummary{Average: math.Round(avg*100) / 100, Count: count},
+		CreatedAt: full.CreatedAt,
+	}, nil
 }
 
 // GetProfile retrieves a user's profile by ID.
@@ -134,8 +172,14 @@ func (s *Service) GetProfile(ctx context.Context, userID pgtype.UUID) (*UserResp
 
 // UpdateProfile updates the authenticated user's profile.
 func (s *Service) UpdateProfile(ctx context.Context, userID pgtype.UUID, req UpdateProfileRequest) (*UserResponse, error) {
+	req.FullName = strings.TrimSpace(req.FullName)
+
 	errs := make(validator.Errors)
 	validator.ValidateRequired(errs, "full_name", req.FullName)
+	validator.ValidateMaxLength(errs, "full_name", req.FullName, 100)
+	if req.Bio != nil {
+		validator.ValidateMaxLength(errs, "bio", *req.Bio, 2000)
+	}
 	if errs.HasErrors() {
 		return nil, errs
 	}
@@ -153,7 +197,7 @@ func (s *Service) UpdateProfile(ctx context.Context, userID pgtype.UUID, req Upd
 
 // generateAuthResponse creates access + refresh tokens and builds the response.
 func (s *Service) generateAuthResponse(ctx context.Context, user *UserRow) (*AuthResponse, error) {
-	userIDStr := uuidToString(user.ID)
+	userIDStr := user.ID.String()
 
 	accessToken, err := auth.GenerateAccessToken(userIDStr, s.jwtSecret)
 	if err != nil {
@@ -182,7 +226,7 @@ func (s *Service) generateAuthResponse(ctx context.Context, user *UserRow) (*Aut
 // toUserResponse maps a DB row to the public-facing DTO.
 func toUserResponse(u *UserRow) UserResponse {
 	resp := UserResponse{
-		ID:       uuidToString(u.ID),
+		ID:       u.ID.String(),
 		Email:    u.Email,
 		FullName: u.FullName,
 	}
@@ -204,17 +248,9 @@ func toUserResponse(u *UserRow) UserResponse {
 	return resp
 }
 
-// uuidToString converts a pgtype.UUID to its string representation.
-func uuidToString(id pgtype.UUID) string {
-	if !id.Valid {
-		return ""
-	}
-	b := id.Bytes
-	return hex.EncodeToString(b[0:4]) + "-" +
-		hex.EncodeToString(b[4:6]) + "-" +
-		hex.EncodeToString(b[6:8]) + "-" +
-		hex.EncodeToString(b[8:10]) + "-" +
-		hex.EncodeToString(b[10:16])
+// normalizeEmail lower-cases and trims an email so lookups are case-insensitive.
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // hashToken returns the SHA-256 hex digest of a token string.

@@ -46,31 +46,22 @@ func (r *RefreshTokenRepository) Create(ctx context.Context, userID pgtype.UUID,
 	return rt, nil
 }
 
-// GetByHash retrieves a valid (non-revoked, non-expired) refresh token by its hash.
-func (r *RefreshTokenRepository) GetByHash(ctx context.Context, tokenHash string) (*RefreshTokenRow, error) {
-	row := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, token_hash, expires_at, created_at, revoked_at
-		 FROM refresh_tokens
-		 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
+// Consume atomically revokes a valid (non-revoked, non-expired) refresh token
+// and returns the user it belonged to. Doing this in one statement means a
+// token can never be redeemed twice, even by concurrent requests.
+func (r *RefreshTokenRepository) Consume(ctx context.Context, tokenHash string) (pgtype.UUID, error) {
+	var userID pgtype.UUID
+	err := r.pool.QueryRow(ctx,
+		`UPDATE refresh_tokens SET revoked_at = now()
+		 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+		 RETURNING user_id`,
 		tokenHash,
-	)
-
-	rt := &RefreshTokenRow{}
-	err := row.Scan(&rt.ID, &rt.UserID, &rt.TokenHash, &rt.ExpiresAt, &rt.CreatedAt, &rt.RevokedAt)
+	).Scan(&userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrUserNotFound // reuse — token not found
+			return pgtype.UUID{}, ErrInvalidRefreshToken
 		}
-		return nil, err
+		return pgtype.UUID{}, err
 	}
-	return rt, nil
-}
-
-// Revoke marks a refresh token as revoked.
-func (r *RefreshTokenRepository) Revoke(ctx context.Context, tokenHash string) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1`,
-		tokenHash,
-	)
-	return err
+	return userID, nil
 }
