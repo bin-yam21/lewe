@@ -131,9 +131,60 @@ internal/request/   → Body decoding (1 MiB cap), UUID path params, pagination
 
 ### Not Done / Possible Next Steps
 
+See Phase 2 below.
+
+---
+
+## Phase 2 — Communication & Hardening (2026-09-30)
+
+### What Was Built
+
+- **Messaging** (`internal/messages`): a chat thread per match. Participants
+  can post while the match is pending, accepted or completed; declined or
+  cancelled matches keep their history readable but reject new messages.
+- **In-app notifications** (`internal/notifications`): the matching worker,
+  every match transition, messages and ratings notify the affected users.
+  Endpoints list them, count unread and mark one/all as read.
+- **Auth rate limiting**: per-IP token bucket on `/auth/*` (`AUTH_RATE_LIMIT`,
+  default 20/min), `429` + `Retry-After`. `TRUST_PROXY` uses
+  `X-Forwarded-For` behind a reverse proxy.
+- **CORS** for browser clients (`CORS_ALLOWED_ORIGINS`).
+- `app.New` now takes an `app.Config`; `router.New` takes `router.Options`.
+
+### Database Schema
+
+**messages**: match, sender, body, created_at. Indexed by `(match_id, created_at)`.
+
+**notifications**: user, type, match, read_at, created_at. Partial index on
+unread rows for the unread count.
+
+### Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Notifications written in the same transaction as the event** | A notification can never describe something that was rolled back, and never goes missing for something that happened |
+| **Worker notifies inside its single SQL statement** | `INSERT … RETURNING` feeds a second `INSERT` into notifications via data-modifying CTEs — still one round trip |
+| **`notifications.CancelPendingMatches` helper** | Items, wants and matches all cancel pending matches as a side effect; one helper cancels them and notifies both users consistently |
+| **`created_at DEFAULT clock_timestamp()` on notifications** | One transaction can create several notifications for the same user (e.g. "confirmed" plus "competing match cancelled"). `now()` is fixed per transaction, which made their order random; `clock_timestamp()` preserves insertion order |
+| **Notification text generated from `type`** | Clients get a ready-to-show `message` but can localise by `type` |
+| **In-memory rate limiter** | No new dependency or infrastructure; fine for a single instance. Multiple instances would need a shared store (e.g. Redis) |
+| **Rate limiting only on `/auth/*`** | Those are the endpoints worth brute-forcing; everything else requires a token |
+
+### Verification
+
+- `go build`, `go vet`, `gofmt` — ✅
+- Unit tests for the rate limiter (refill, per-client buckets, sweeping, proxy
+  header) and CORS — ✅
+- End-to-end tests for messaging, the notification for every lifecycle step,
+  read/unread handling, auth rate limiting and CORS preflight
+  (`go test -race ./...`, repeated runs) — ✅
+- Smoke test of the built binary and all down migrations in reverse order — ✅
+
+### Still Not Done
+
 - Image upload (items take image URLs only)
-- Notifications (email/push) when a match is found or changes
-- Messaging between matched users
-- Multi-party (A→B→C→A) cycles; matching is two-way only
-- Rate limiting on auth endpoints
+- Email/push delivery of notifications (they are in-app only)
+- Real-time delivery (WebSocket/SSE); clients poll `/notifications/unread-count`
+- Multi-party (A→B→C→A) swap cycles; matching is two-way only
+- Password reset and email verification
 - The sqlc query files still cover only users and refresh tokens; repositories use pgx directly

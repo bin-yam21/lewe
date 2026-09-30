@@ -36,6 +36,13 @@ type env struct {
 
 func setup(t *testing.T) *env {
 	t.Helper()
+	return setupWith(t, app.Config{})
+}
+
+// setupWith is setup with extra app configuration (JWT secret and match
+// interval are filled in).
+func setupWith(t *testing.T, cfg app.Config) *env {
+	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL not set; skipping end-to-end test")
@@ -50,12 +57,13 @@ func setup(t *testing.T) *env {
 	t.Cleanup(pool.Close)
 
 	_, err = pool.Exec(context.Background(),
-		`TRUNCATE users, refresh_tokens, items, wants, matches, ratings CASCADE`)
+		`TRUNCATE users, refresh_tokens, items, wants, matches, ratings, messages, notifications CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
-	a := app.New(pool, testSecret, time.Hour)
+	cfg.JWTSecret, cfg.MatchInterval = testSecret, time.Hour
+	a := app.New(pool, cfg)
 	srv := httptest.NewServer(a.Handler)
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, app: a, pool: pool}
@@ -535,5 +543,150 @@ func TestHealth(t *testing.T) {
 	e := setup(t)
 	if out := e.must(200, "GET", "/health", "", nil); out["status"] != "ok" {
 		t.Errorf("health = %v", out)
+	}
+}
+
+// notificationTypes returns the user's notification types, newest first.
+func (e *env) notificationTypes(u user, query string) []string {
+	e.t.Helper()
+	out := []string{}
+	for _, n := range e.must(200, "GET", "/api/v1/notifications"+query, u.token, nil)["data"].([]any) {
+		out = append(out, n.(obj)["type"].(string))
+	}
+	return out
+}
+
+func (e *env) unread(u user) float64 {
+	e.t.Helper()
+	return e.must(200, "GET", "/api/v1/notifications/unread-count", u.token, nil)["unread"].(float64)
+}
+
+func TestMessagesAndNotifications(t *testing.T) {
+	e := setup(t)
+	alice, bob, carol := e.register("Alice"), e.register("Bob"), e.register("Carol")
+
+	e.item(alice, "Road bike", "sports", "good", 200)
+	e.item(bob, "Camping tent", "sports", "good", 180)
+	e.item(carol, "Tent pegs", "sports", "good", 5)
+	e.want(alice, "sports", []string{"tent"}, nil)
+	e.want(bob, "sports", []string{"bike"}, nil)
+	e.want(carol, "sports", []string{"bike"}, nil)
+	if n := e.match(); n != 2 {
+		t.Fatalf("created %d matches, want 2", n)
+	}
+
+	// Everyone involved hears about their new matches.
+	if got := e.notificationTypes(alice, ""); len(got) != 2 || got[0] != "match_found" {
+		t.Errorf("alice notifications = %v", got)
+	}
+	if got := e.unread(bob); got != 1 {
+		t.Errorf("bob unread = %v, want 1", got)
+	}
+
+	var matchID string
+	for _, m := range e.matches(bob, "") {
+		matchID = m.(obj)["id"].(string)
+	}
+	path := "/api/v1/matches/" + matchID
+
+	// Chat between the two participants only.
+	e.must(422, "POST", path+"/messages", alice.token, obj{"body": "   "})
+	e.must(422, "POST", path+"/messages", alice.token, obj{"body": strings.Repeat("x", 2001)})
+	e.must(404, "POST", path+"/messages", carol.token, obj{"body": "hi"})
+	e.must(404, "GET", path+"/messages", carol.token, nil)
+	msg := e.must(201, "POST", path+"/messages", alice.token, obj{"body": " Is the tent waterproof? "})
+	if msg["body"] != "Is the tent waterproof?" || msg["from_you"] != true {
+		t.Errorf("message = %v", msg)
+	}
+	e.must(201, "POST", path+"/messages", bob.token, obj{"body": "Yes, 3000mm."})
+
+	msgs := e.must(200, "GET", path+"/messages", bob.token, nil)["data"].([]any)
+	if len(msgs) != 2 || msgs[0].(obj)["from_you"] != false || msgs[1].(obj)["body"] != "Yes, 3000mm." {
+		t.Errorf("bob's view of messages = %v", msgs)
+	}
+	if got := e.notificationTypes(bob, "?unread=true"); len(got) != 2 || got[0] != "message_received" {
+		t.Errorf("bob unread notifications = %v", got)
+	}
+
+	// Each step of the lifecycle notifies the other participant.
+	e.must(200, "POST", path+"/accept", alice.token, nil)
+	if got := e.notificationTypes(bob, "")[0]; got != "match_accepted" {
+		t.Errorf("bob latest = %s, want match_accepted", got)
+	}
+	e.must(200, "POST", path+"/accept", bob.token, nil)
+	if got := e.notificationTypes(alice, "")[0]; got != "match_confirmed" {
+		t.Errorf("alice latest = %s, want match_confirmed", got)
+	}
+	// Carol's competing match for Alice's bike was cancelled; she is told.
+	if got := e.notificationTypes(carol, "")[0]; got != "match_cancelled" {
+		t.Errorf("carol latest = %s, want match_cancelled", got)
+	}
+	e.must(200, "PUT", path+"/exchange", alice.token, obj{"method": "meetup"})
+	if got := e.notificationTypes(bob, "")[0]; got != "exchange_updated" {
+		t.Errorf("bob latest = %s, want exchange_updated", got)
+	}
+	e.must(200, "POST", path+"/complete", alice.token, nil)
+	e.must(200, "POST", path+"/complete", bob.token, nil)
+	if got := e.notificationTypes(alice, "")[0]; got != "match_completed" {
+		t.Errorf("alice latest = %s, want match_completed", got)
+	}
+	e.must(201, "POST", path+"/rating", alice.token, obj{"score": 5})
+	bobLatest := e.must(200, "GET", "/api/v1/notifications?limit=1", bob.token, nil)["data"].([]any)[0].(obj)
+	if bobLatest["type"] != "rating_received" || bobLatest["match_id"] != matchID || bobLatest["message"] == "" {
+		t.Errorf("bob latest = %v", bobLatest)
+	}
+
+	// Chat stays open after completion but closes on cancelled matches.
+	e.must(201, "POST", path+"/messages", bob.token, obj{"body": "Thanks!"})
+	var carolMatch string
+	for _, m := range e.matches(carol, "") {
+		carolMatch = m.(obj)["id"].(string)
+	}
+	e.must(409, "POST", "/api/v1/matches/"+carolMatch+"/messages", carol.token, obj{"body": "hello?"})
+	e.must(200, "GET", "/api/v1/matches/"+carolMatch+"/messages", carol.token, nil)
+
+	// Marking notifications read.
+	n := e.must(200, "GET", "/api/v1/notifications?unread=true", alice.token, nil)["data"].([]any)
+	before := e.unread(alice)
+	e.must(204, "POST", "/api/v1/notifications/"+n[0].(obj)["id"].(string)+"/read", alice.token, nil)
+	if got := e.unread(alice); got != before-1 {
+		t.Errorf("unread after marking one = %v, want %v", got, before-1)
+	}
+	e.must(404, "POST", "/api/v1/notifications/"+n[0].(obj)["id"].(string)+"/read", bob.token, nil)
+	e.must(404, "POST", "/api/v1/notifications/nope/read", alice.token, nil)
+	e.must(204, "POST", "/api/v1/notifications/read-all", alice.token, nil)
+	if got := e.unread(alice); got != 0 {
+		t.Errorf("unread after read-all = %v", got)
+	}
+	if got := len(e.notificationTypes(alice, "?unread=true")); got != 0 {
+		t.Errorf("unread list = %d", got)
+	}
+	e.must(401, "GET", "/api/v1/notifications", "", nil)
+}
+
+func TestAuthRateLimit(t *testing.T) {
+	e := setupWith(t, app.Config{AuthRateLimit: 3})
+	body := obj{"email": "nobody@example.com", "password": "password123"}
+	for i := 0; i < 3; i++ {
+		e.must(401, "POST", "/api/v1/auth/login", "", body)
+	}
+	e.must(429, "POST", "/api/v1/auth/login", "", body)
+	e.must(429, "POST", "/api/v1/auth/register", "", body)
+	// Other routes are not limited.
+	e.must(200, "GET", "/api/v1/items", "", nil)
+}
+
+func TestCORS(t *testing.T) {
+	e := setupWith(t, app.Config{CORSOrigins: []string{"https://app.example.com"}})
+	req, _ := http.NewRequest("OPTIONS", e.srv.URL+"/api/v1/items", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 204 || resp.Header.Get("Access-Control-Allow-Origin") != "https://app.example.com" {
+		t.Errorf("preflight: %d %v", resp.StatusCode, resp.Header)
 	}
 }

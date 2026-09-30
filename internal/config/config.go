@@ -3,6 +3,8 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -14,6 +16,13 @@ type Config struct {
 	JWTSecret     string
 	Port          string
 	MatchInterval time.Duration
+	// AuthRateLimit is the number of auth requests allowed per client IP per
+	// minute; 0 disables rate limiting.
+	AuthRateLimit int
+	// TrustProxy takes the client IP from X-Forwarded-For (only behind a proxy).
+	TrustProxy bool
+	// CORSOrigins lists browser origins allowed to call the API ("*" for any).
+	CORSOrigins []string
 }
 
 // Load reads configuration from environment variables.
@@ -28,6 +37,8 @@ func Load() Config {
 		JWTSecret:     getEnv("JWT_SECRET", ""),
 		Port:          getEnv("PORT", ":8080"),
 		MatchInterval: time.Minute,
+		AuthRateLimit: 20,
+		TrustProxy:    os.Getenv("TRUST_PROXY") == "true",
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -49,6 +60,19 @@ func Load() Config {
 			log.Fatalf("MATCH_INTERVAL must be a positive duration such as 30s or 5m, got %q", v)
 		}
 		cfg.MatchInterval = d
+	}
+
+	if v := os.Getenv("AUTH_RATE_LIMIT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			log.Fatalf("AUTH_RATE_LIMIT must be a non-negative integer, got %q", v)
+		}
+		cfg.AuthRateLimit = n
+	}
+	for _, o := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			cfg.CORSOrigins = append(cfg.CORSOrigins, o)
+		}
 	}
 
 	return cfg

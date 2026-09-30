@@ -14,6 +14,7 @@ import (
 
 	"github.com/yeabt/lewe/internal/db"
 	"github.com/yeabt/lewe/internal/middleware"
+	"github.com/yeabt/lewe/internal/notifications"
 	"github.com/yeabt/lewe/internal/request"
 	"github.com/yeabt/lewe/internal/response"
 	"github.com/yeabt/lewe/internal/validator"
@@ -95,10 +96,16 @@ func scanRating(row pgx.Row) (*RatingResponse, error) {
 // Create stores a rating.
 func (r *Repository) Create(ctx context.Context, matchID, raterID, rateeID pgtype.UUID, req RatingRequest) (*RatingResponse, error) {
 	var id pgtype.UUID
-	err := r.pool.QueryRow(ctx,
-		`INSERT INTO ratings (match_id, rater_id, ratee_id, score, comment)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		matchID, raterID, rateeID, req.Score, req.Comment).Scan(&id)
+	err := db.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx,
+			`INSERT INTO ratings (match_id, rater_id, ratee_id, score, comment)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+			matchID, raterID, rateeID, req.Score, req.Comment).Scan(&id)
+		if err != nil {
+			return err
+		}
+		return notifications.Create(ctx, tx, rateeID, notifications.TypeRatingReceived, matchID)
+	})
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			return nil, ErrAlreadyRated

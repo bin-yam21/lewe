@@ -11,6 +11,7 @@ import (
 
 	"github.com/yeabt/lewe/internal/catalog"
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/notifications"
 	"github.com/yeabt/lewe/internal/request"
 	"github.com/yeabt/lewe/internal/validator"
 )
@@ -75,33 +76,41 @@ func (s *Service) Accept(ctx context.Context, id, userID pgtype.UUID) (*MatchRes
 		}
 
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		alreadyAccepted := m.AAcceptedAt.Valid
 		if m.isUserA(userID) {
-			if !m.AAcceptedAt.Valid {
-				m.AAcceptedAt = now
-			}
-		} else if !m.BAcceptedAt.Valid {
-			m.BAcceptedAt = now
+			m.AAcceptedAt = firstTime(m.AAcceptedAt, now)
+		} else {
+			alreadyAccepted = m.BAcceptedAt.Valid
+			m.BAcceptedAt = firstTime(m.BAcceptedAt, now)
+		}
+		if alreadyAccepted {
+			return pgtype.UUID{}, nil
 		}
 
-		if m.AAcceptedAt.Valid && m.BAcceptedAt.Valid {
-			ok, err := lockAvailableItems(ctx, tx, m.ItemAID, m.ItemBID)
-			if err != nil {
-				return pgtype.UUID{}, err
-			}
-			if !ok {
-				// The swap can no longer happen; close it and tell the caller.
-				m.Status = StatusCancelled
-				return pgtype.UUID{}, errCommitThen(ErrItemUnavailable)
-			}
-			if err := setItemsStatus(ctx, tx, m.ItemAID, m.ItemBID, "available", "reserved"); err != nil {
-				return pgtype.UUID{}, err
-			}
-			if err := cancelOtherPendingForItems(ctx, tx, m.ID, m.ItemAID, m.ItemBID); err != nil {
-				return pgtype.UUID{}, err
-			}
-			m.Status = StatusAccepted
+		if !(m.AAcceptedAt.Valid && m.BAcceptedAt.Valid) {
+			return pgtype.UUID{}, notify(ctx, tx, m, userID, notifications.TypeMatchAccepted)
 		}
-		return pgtype.UUID{}, nil
+		// Both have accepted: reserve the items. If either is gone the swap
+		// can no longer happen, so close it and tell the caller.
+		ok, err := lockAvailableItems(ctx, tx, m.ItemAID, m.ItemBID)
+		if err != nil {
+			return pgtype.UUID{}, err
+		}
+		if !ok {
+			m.Status = StatusCancelled
+			if err := notify(ctx, tx, m, userID, notifications.TypeMatchCancelled); err != nil {
+				return pgtype.UUID{}, err
+			}
+			return pgtype.UUID{}, errCommitThen(ErrItemUnavailable)
+		}
+		if err := setItemsStatus(ctx, tx, m.ItemAID, m.ItemBID, "available", "reserved"); err != nil {
+			return pgtype.UUID{}, err
+		}
+		if err := cancelOtherPendingForItems(ctx, tx, m.ID, m.ItemAID, m.ItemBID); err != nil {
+			return pgtype.UUID{}, err
+		}
+		m.Status = StatusAccepted
+		return pgtype.UUID{}, notify(ctx, tx, m, userID, notifications.TypeMatchConfirmed)
 	})
 }
 
@@ -112,7 +121,7 @@ func (s *Service) Decline(ctx context.Context, id, userID pgtype.UUID) (*MatchRe
 			return pgtype.UUID{}, ErrInvalidState
 		}
 		m.Status = StatusDeclined
-		return userID, nil
+		return userID, notify(ctx, tx, m, userID, notifications.TypeMatchDeclined)
 	})
 }
 
@@ -126,7 +135,7 @@ func (s *Service) Cancel(ctx context.Context, id, userID pgtype.UUID) (*MatchRes
 			return pgtype.UUID{}, err
 		}
 		m.Status = StatusCancelled
-		return userID, nil
+		return userID, notify(ctx, tx, m, userID, notifications.TypeMatchCancelled)
 	})
 }
 
@@ -165,7 +174,7 @@ func (s *Service) SetExchange(ctx context.Context, id, userID pgtype.UUID, req E
 		m.ExchangeMethod = pgtype.Text{String: req.Method, Valid: true}
 		m.ExchangeDetails = details
 		m.ExchangeProposedBy = userID
-		return pgtype.UUID{}, nil
+		return pgtype.UUID{}, notify(ctx, tx, m, userID, notifications.TypeExchangeUpdated)
 	})
 }
 
@@ -183,11 +192,9 @@ func (s *Service) Complete(ctx context.Context, id, userID pgtype.UUID) (*MatchR
 
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		if m.isUserA(userID) {
-			if !m.ACompletedAt.Valid {
-				m.ACompletedAt = now
-			}
-		} else if !m.BCompletedAt.Valid {
-			m.BCompletedAt = now
+			m.ACompletedAt = firstTime(m.ACompletedAt, now)
+		} else {
+			m.BCompletedAt = firstTime(m.BCompletedAt, now)
 		}
 
 		if m.ACompletedAt.Valid && m.BCompletedAt.Valid {
@@ -199,9 +206,27 @@ func (s *Service) Complete(ctx context.Context, id, userID pgtype.UUID) (*MatchR
 			}
 			m.Status = StatusCompleted
 			m.CompletedAt = now
+			return pgtype.UUID{}, notify(ctx, tx, m, userID, notifications.TypeMatchCompleted)
 		}
 		return pgtype.UUID{}, nil
 	})
+}
+
+// firstTime keeps an existing timestamp, or uses now if it is unset.
+func firstTime(existing, now pgtype.Timestamptz) pgtype.Timestamptz {
+	if existing.Valid {
+		return existing
+	}
+	return now
+}
+
+// notify tells the other participant of m (not actor) about an event.
+func notify(ctx context.Context, tx pgx.Tx, m *Row, actor pgtype.UUID, typ string) error {
+	other := m.UserAID
+	if m.isUserA(actor) {
+		other = m.UserBID
+	}
+	return notifications.Create(ctx, tx, other, typ, m.ID)
 }
 
 // commitThenError signals that the transaction's changes should be committed

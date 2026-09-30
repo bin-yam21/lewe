@@ -30,7 +30,13 @@ func main() {
 	defer pool.Close()
 
 	// Wire up dependencies
-	a := app.New(pool, cfg.JWTSecret, cfg.MatchInterval)
+	a := app.New(pool, app.Config{
+		JWTSecret:     cfg.JWTSecret,
+		MatchInterval: cfg.MatchInterval,
+		AuthRateLimit: cfg.AuthRateLimit,
+		TrustProxy:    cfg.TrustProxy,
+		CORSOrigins:   cfg.CORSOrigins,
+	})
 
 	// Cancelled on SIGINT / SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/yeabt/lewe/internal/catalog"
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/notifications"
 	"github.com/yeabt/lewe/internal/request"
 	"github.com/yeabt/lewe/internal/validator"
 )
@@ -150,10 +151,7 @@ func (r *Repository) Cancel(ctx context.Context, id, userID pgtype.UUID) error {
 		if tag.RowsAffected() == 0 {
 			return ErrWantNotFound
 		}
-		_, err = tx.Exec(ctx,
-			`UPDATE matches SET status = 'cancelled', updated_at = now()
-			 WHERE status = 'pending' AND (want_a_id = $1 OR want_b_id = $1)`, id)
-		return err
+		return notifications.CancelPendingMatches(ctx, tx, `want_a_id = $1 OR want_b_id = $1`, id)
 	})
 }
 
