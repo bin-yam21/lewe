@@ -52,10 +52,15 @@ func New(h Handlers, opts Options) http.Handler {
 	mux.Handle("POST /api/v1/auth/login", limited(h.Users.Login))
 	mux.Handle("POST /api/v1/auth/refresh", limited(h.Users.RefreshToken))
 	mux.Handle("POST /api/v1/auth/logout", limited(h.Users.Logout))
+	mux.Handle("POST /api/v1/auth/verify-email", limited(h.Users.VerifyEmail))
+	mux.Handle("POST /api/v1/auth/forgot-password", limited(h.Users.ForgotPassword))
+	mux.Handle("POST /api/v1/auth/reset-password", limited(h.Users.ResetPassword))
 
 	// --- Users ---
 	mux.Handle("GET /api/v1/users/me", authed(h.Users.GetProfile))
 	mux.Handle("PUT /api/v1/users/me", authed(h.Users.UpdateProfile))
+	mux.Handle("PUT /api/v1/users/me/password", authed(h.Users.ChangePassword))
+	mux.Handle("POST /api/v1/users/me/verify-email", authed(h.Users.ResendVerification))
 	mux.Handle("GET /api/v1/users/me/items", authed(h.Items.ListMine))
 	mux.HandleFunc("GET /api/v1/users/{id}", h.Users.GetPublicProfile)
 	mux.HandleFunc("GET /api/v1/users/{id}/ratings", h.Ratings.ListForUser)

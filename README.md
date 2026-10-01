@@ -25,6 +25,11 @@ Or run everything in Docker: `docker compose up --build`.
 | `AUTH_RATE_LIMIT` | no      | `20`    | `/auth/*` requests per client IP per minute; `0` disables |
 | `TRUST_PROXY`    | no       | `false` | Use `X-Forwarded-For` as the client IP (only behind a proxy) |
 | `CORS_ALLOWED_ORIGINS` | no | —       | Comma-separated browser origins allowed to call the API, or `*` |
+| `APP_URL`        | no       | `http://localhost:3000` | Client app base URL for links in emails |
+| `SMTP_HOST`      | no       | —       | SMTP server; when unset, emails are written to the log |
+| `SMTP_PORT`      | no       | `587`   | STARTTLS when offered; `465` uses implicit TLS |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | no | — | SMTP credentials |
+| `SMTP_FROM`      | no       | `Lewe <no-reply@localhost>` | Sender address |
 
 ## Testing
 
@@ -73,14 +78,25 @@ Validation failures return `422` with `{"error": ..., "fields": {field: message}
 | `POST` | `/auth/login` | — | `{email, password}` → tokens + user |
 | `POST` | `/auth/refresh` | — | `{refresh_token}` → new token pair (old one is revoked) |
 | `POST` | `/auth/logout` | — | `{refresh_token}` → revokes it |
+| `POST` | `/auth/verify-email` | — | `{token}` from the emailed link → marks the email verified |
+| `POST` | `/auth/forgot-password` | — | `{email}` → emails a reset link if the account exists (always `202`) |
+| `POST` | `/auth/reset-password` | — | `{token, password}` → new password; signs out all sessions |
 | `GET` | `/users/me` | ✓ | Your profile |
 | `PUT` | `/users/me` | ✓ | `{full_name, phone?, location?, bio?, avatar_url?}` |
+| `PUT` | `/users/me/password` | ✓ | `{current_password, new_password}` → fresh tokens; other sessions signed out |
+| `POST` | `/users/me/verify-email` | ✓ | Email a new verification link |
 | `GET` | `/users/me/items` | ✓ | Your items, any status (`?status=`) |
 | `GET` | `/users/{id}` | — | Public profile with rating average and count |
 | `GET` | `/users/{id}/ratings` | — | Ratings a user has received |
 
 Access tokens last 15 minutes; refresh tokens last 7 days and are single-use.
 Auth routes are rate limited per IP (`429` with a `Retry-After` header).
+
+Signing up sends a verification email; `email_verified` on the profile shows
+the result. Emailed links point at `APP_URL/verify-email?token=…` and
+`APP_URL/reset-password?token=…`; the client app reads the token and posts it
+to the API. Verification links last 48 hours, reset links 1 hour, and each
+works once (a newer link replaces older ones).
 
 ### Items
 
@@ -158,6 +174,7 @@ internal/matches/     match lifecycle + worker
 internal/ratings/     ratings                ┘
 internal/messages/    chat within a match
 internal/notifications/ in-app notifications
+internal/mail/        SMTP and log mailers
 internal/db/          pgx pool, transactions, embedded SQL migrations
 internal/middleware/  auth, logging, panic recovery, rate limiting, CORS
 internal/request/     JSON decoding, path IDs, pagination

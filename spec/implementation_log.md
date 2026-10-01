@@ -182,9 +182,59 @@ unread rows for the unread count.
 
 ### Still Not Done
 
+See Phase 3 below.
+
+---
+
+## Phase 3 — Account Recovery (2026-10-01)
+
+### What Was Built
+
+- **Email verification**: sign-up emails a link; `POST /auth/verify-email`
+  confirms it; `POST /users/me/verify-email` sends a new one. Profiles expose
+  `email_verified`.
+- **Password reset**: `POST /auth/forgot-password` emails a 1-hour link;
+  `POST /auth/reset-password` sets the new password, signs out every session
+  and marks the email verified.
+- **Change password**: `PUT /users/me/password` checks the current password,
+  signs out other sessions and returns a fresh token pair.
+- **`internal/mail`**: `Mailer` interface with an SMTP implementation
+  (STARTTLS or implicit TLS on 465, header-injection safe), a log mailer for
+  development and an in-memory mailer for tests.
+- The users repository now scans through one `userColumns` list.
+
+### Database Schema
+
+**users**: + `email_verified_at`.
+
+**account_tokens**: user, purpose (`verify_email` / `reset_password`),
+token_hash (unique), expires_at, used_at.
+
+### Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Hash emailed tokens like refresh tokens** | A database leak doesn't expose working links |
+| **Consume with one `UPDATE … RETURNING`** | A link can't be used twice, even concurrently |
+| **A new link invalidates older unused ones** | Only the most recent email works |
+| **Forgot-password always returns 202 with the same message** | Callers can't discover which emails have accounts |
+| **Mail failures don't fail sign-up or forgot-password** | They're logged; the user can request another link |
+| **Verification isn't enforced yet** | `email_verified` is exposed so a policy (e.g. verified users only can list items) can be added later without a schema change |
+| **Log mailer by default** | Local development works with no SMTP server; links appear in the server log |
+
+### Verification
+
+- End-to-end test of sign-up verification, resend (older link stops working),
+  forgot/reset password (no account enumeration, single use, sessions
+  revoked, expiry), and change password — ✅
+- Unit test for email header injection — ✅
+- `go test -race ./...`, `make lint`, down migrations, and a smoke test
+  showing emailed links in the log without SMTP — ✅
+
+### Still Not Done
+
 - Image upload (items take image URLs only)
 - Email/push delivery of notifications (they are in-app only)
 - Real-time delivery (WebSocket/SSE); clients poll `/notifications/unread-count`
 - Multi-party (A→B→C→A) swap cycles; matching is two-way only
-- Password reset and email verification
 - The sqlc query files still cover only users and refresh tokens; repositories use pgx directly

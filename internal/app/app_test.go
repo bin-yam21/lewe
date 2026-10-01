@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/yeabt/lewe/internal/app"
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/mail"
 )
 
 // These end-to-end tests exercise the full HTTP API against a real
@@ -57,7 +59,7 @@ func setupWith(t *testing.T, cfg app.Config) *env {
 	t.Cleanup(pool.Close)
 
 	_, err = pool.Exec(context.Background(),
-		`TRUNCATE users, refresh_tokens, items, wants, matches, ratings, messages, notifications CASCADE`)
+		`TRUNCATE users, refresh_tokens, account_tokens, items, wants, matches, ratings, messages, notifications CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -689,4 +691,109 @@ func TestCORS(t *testing.T) {
 	if resp.StatusCode != 204 || resp.Header.Get("Access-Control-Allow-Origin") != "https://app.example.com" {
 		t.Errorf("preflight: %d %v", resp.StatusCode, resp.Header)
 	}
+}
+
+var tokenInLink = regexp.MustCompile(`https://app\.test/([a-z-]+)\?token=([0-9a-f]{64})`)
+
+// lastLink returns the page and token of the newest email sent to addr.
+func lastLink(t *testing.T, m *mail.MemoryMailer, addr string) (page, token string) {
+	t.Helper()
+	sent := m.Sent()
+	for i := len(sent) - 1; i >= 0; i-- {
+		if sent[i].To == addr {
+			match := tokenInLink.FindStringSubmatch(sent[i].Body)
+			if match == nil {
+				t.Fatalf("no link in email: %q", sent[i].Body)
+			}
+			return match[1], match[2]
+		}
+	}
+	t.Fatalf("no email sent to %s", addr)
+	return "", ""
+}
+
+func TestEmailVerificationAndPasswordReset(t *testing.T) {
+	mailer := &mail.MemoryMailer{}
+	e := setupWith(t, app.Config{Mailer: mailer, AppURL: "https://app.test/"})
+
+	// Signing up sends a verification link.
+	out := e.must(201, "POST", "/api/v1/auth/register", "", obj{
+		"email": "alice@example.com", "password": "password123", "full_name": "Alice",
+	})
+	alice := user{id: out["user"].(obj)["id"].(string), token: out["access_token"].(string), refresh: out["refresh_token"].(string)}
+	if out["user"].(obj)["email_verified"] != false {
+		t.Errorf("new user should be unverified: %v", out["user"])
+	}
+	if sent := mailer.Sent(); len(sent) != 1 || sent[0].Subject != "Confirm your email for Lewe" {
+		t.Fatalf("sent = %+v", sent)
+	}
+	page, verifyToken := lastLink(t, mailer, "alice@example.com")
+	if page != "verify-email" {
+		t.Errorf("link page = %s", page)
+	}
+
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": strings.Repeat("0", 64)})
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": ""})
+	e.must(204, "POST", "/api/v1/auth/verify-email", "", obj{"token": verifyToken})
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": verifyToken}) // single use
+	if me := e.must(200, "GET", "/api/v1/users/me", alice.token, nil); me["email_verified"] != true {
+		t.Errorf("after verifying: %v", me)
+	}
+	e.must(409, "POST", "/api/v1/users/me/verify-email", alice.token, nil)
+
+	// Resending replaces the earlier link.
+	bob := e.register("Bob")
+	_, firstBob := lastLink(t, mailer, "bob@example.com")
+	e.must(202, "POST", "/api/v1/users/me/verify-email", bob.token, nil)
+	_, secondBob := lastLink(t, mailer, "bob@example.com")
+	if firstBob == secondBob {
+		t.Fatal("resend should issue a new token")
+	}
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": firstBob})
+	e.must(204, "POST", "/api/v1/auth/verify-email", "", obj{"token": secondBob})
+
+	// Forgot password never reveals whether an account exists.
+	before := len(mailer.Sent())
+	unknown := e.must(202, "POST", "/api/v1/auth/forgot-password", "", obj{"email": "nobody@example.com"})
+	known := e.must(202, "POST", "/api/v1/auth/forgot-password", "", obj{"email": " ALICE@example.com "})
+	if unknown["message"] != known["message"] {
+		t.Errorf("responses differ: %v vs %v", unknown, known)
+	}
+	if got := len(mailer.Sent()) - before; got != 1 {
+		t.Fatalf("expected exactly one reset email, got %d", got)
+	}
+	e.must(422, "POST", "/api/v1/auth/forgot-password", "", obj{"email": "not-an-email"})
+
+	page, resetToken := lastLink(t, mailer, "alice@example.com")
+	if page != "reset-password" {
+		t.Errorf("link page = %s", page)
+	}
+	e.must(422, "POST", "/api/v1/auth/reset-password", "", obj{"token": resetToken, "password": "short"})
+	e.must(204, "POST", "/api/v1/auth/reset-password", "", obj{"token": resetToken, "password": "new-password-1"})
+	e.must(400, "POST", "/api/v1/auth/reset-password", "", obj{"token": resetToken, "password": "new-password-2"})
+
+	// The reset signed Alice out everywhere and replaced the password.
+	e.must(401, "POST", "/api/v1/auth/refresh", "", obj{"refresh_token": alice.refresh})
+	e.must(401, "POST", "/api/v1/auth/login", "", obj{"email": "alice@example.com", "password": "password123"})
+	login := e.must(200, "POST", "/api/v1/auth/login", "", obj{"email": "alice@example.com", "password": "new-password-1"})
+	token := login["access_token"].(string)
+
+	// Changing a known password: wrong current password is a field error.
+	out = e.must(422, "PUT", "/api/v1/users/me/password", token, obj{"current_password": "nope", "new_password": "another-pass-3"})
+	if out["fields"].(obj)["current_password"] != "is incorrect" {
+		t.Errorf("fields = %v", out["fields"])
+	}
+	e.must(401, "PUT", "/api/v1/users/me/password", "", obj{"current_password": "x", "new_password": "y"})
+	changed := e.must(200, "PUT", "/api/v1/users/me/password", token, obj{"current_password": "new-password-1", "new_password": "another-pass-3"})
+	e.must(401, "POST", "/api/v1/auth/refresh", "", obj{"refresh_token": login["refresh_token"]})
+	e.must(200, "POST", "/api/v1/auth/refresh", "", obj{"refresh_token": changed["refresh_token"]})
+	e.must(200, "POST", "/api/v1/auth/login", "", obj{"email": "alice@example.com", "password": "another-pass-3"})
+
+	// Expired links are rejected.
+	e.must(202, "POST", "/api/v1/auth/forgot-password", "", obj{"email": "bob@example.com"})
+	_, bobReset := lastLink(t, mailer, "bob@example.com")
+	if _, err := e.pool.Exec(context.Background(), `UPDATE account_tokens SET expires_at = now() - interval '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	e.must(400, "POST", "/api/v1/auth/reset-password", "", obj{"token": bobReset, "password": "whatever-123"})
 }

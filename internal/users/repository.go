@@ -28,112 +28,83 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // UserRow represents a user row from the database.
 type UserRow struct {
-	ID           pgtype.UUID
-	Email        string
-	PasswordHash string
-	FullName     string
-	Phone        pgtype.Text
-	Location     pgtype.Text
-	Bio          pgtype.Text
-	AvatarURL    pgtype.Text
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID              pgtype.UUID
+	Email           string
+	PasswordHash    string
+	FullName        string
+	Phone           pgtype.Text
+	Location        pgtype.Text
+	Bio             pgtype.Text
+	AvatarURL       pgtype.Text
+	EmailVerifiedAt pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+const userColumns = `id, email, password_hash, full_name, phone, location, bio, avatar_url,
+	email_verified_at, created_at, updated_at`
+
+func scanUser(row pgx.Row) (*UserRow, error) {
+	u := &UserRow{}
+	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.Phone, &u.Location, &u.Bio,
+		&u.AvatarURL, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return u, nil
 }
 
 // Create inserts a new user into the database.
 func (r *Repository) Create(ctx context.Context, email, passwordHash, fullName string, phone, location, bio *string) (*UserRow, error) {
-	row := r.pool.QueryRow(ctx,
+	user, err := scanUser(r.pool.QueryRow(ctx,
 		`INSERT INTO users (email, password_hash, full_name, phone, location, bio)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, email, password_hash, full_name, phone, location, bio, avatar_url, created_at, updated_at`,
+		 RETURNING `+userColumns,
 		email, passwordHash, fullName, phone, location, bio,
-	)
-
-	user := &UserRow{}
-	err := row.Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.FullName,
-		&user.Phone, &user.Location, &user.Bio, &user.AvatarURL,
-		&user.CreatedAt, &user.UpdatedAt,
-	)
-	if err != nil {
-		// Check for unique constraint violation on email
-		if db.IsUniqueViolation(err) {
-			return nil, ErrEmailTaken
-		}
-		return nil, err
+	))
+	if err != nil && db.IsUniqueViolation(err) {
+		return nil, ErrEmailTaken
 	}
-	return user, nil
+	return user, err
 }
 
 // GetByID retrieves a user by their UUID.
 func (r *Repository) GetByID(ctx context.Context, id pgtype.UUID) (*UserRow, error) {
-	row := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, full_name, phone, location, bio, avatar_url, created_at, updated_at
-		 FROM users WHERE id = $1`,
-		id,
-	)
-
-	user := &UserRow{}
-	err := row.Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.FullName,
-		&user.Phone, &user.Location, &user.Bio, &user.AvatarURL,
-		&user.CreatedAt, &user.UpdatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrUserNotFound
-		}
-		return nil, err
-	}
-	return user, nil
+	return scanUser(r.pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id))
 }
 
 // GetByEmail retrieves a user by their email address.
 func (r *Repository) GetByEmail(ctx context.Context, email string) (*UserRow, error) {
-	row := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, full_name, phone, location, bio, avatar_url, created_at, updated_at
-		 FROM users WHERE email = $1`,
-		email,
-	)
-
-	user := &UserRow{}
-	err := row.Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.FullName,
-		&user.Phone, &user.Location, &user.Bio, &user.AvatarURL,
-		&user.CreatedAt, &user.UpdatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrUserNotFound
-		}
-		return nil, err
-	}
-	return user, nil
+	return scanUser(r.pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE email = $1`, email))
 }
 
 // Update modifies a user's profile fields.
 func (r *Repository) Update(ctx context.Context, id pgtype.UUID, fullName string, phone, location, bio, avatarURL *string) (*UserRow, error) {
-	row := r.pool.QueryRow(ctx,
+	return scanUser(r.pool.QueryRow(ctx,
 		`UPDATE users
 		 SET full_name = $2, phone = $3, location = $4, bio = $5, avatar_url = $6, updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, email, password_hash, full_name, phone, location, bio, avatar_url, created_at, updated_at`,
+		 RETURNING `+userColumns,
 		id, fullName, phone, location, bio, avatarURL,
-	)
+	))
+}
 
-	user := &UserRow{}
-	err := row.Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.FullName,
-		&user.Phone, &user.Location, &user.Bio, &user.AvatarURL,
-		&user.CreatedAt, &user.UpdatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrUserNotFound
-		}
-		return nil, err
-	}
-	return user, nil
+// setPassword replaces a user's password hash.
+func setPassword(ctx context.Context, q db.DBTX, id pgtype.UUID, passwordHash string) error {
+	_, err := q.Exec(ctx,
+		`UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, id, passwordHash)
+	return err
+}
+
+// markEmailVerified records that the user proved they own their email address.
+func markEmailVerified(ctx context.Context, q db.DBTX, id pgtype.UUID) error {
+	_, err := q.Exec(ctx,
+		`UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
+		 WHERE id = $1`, id)
+	return err
 }
 
 // RatingSummary returns the average score and number of ratings a user has received.

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+
+	"github.com/yeabt/lewe/internal/mail"
 )
 
 // Config holds all configuration for the application.
@@ -23,6 +25,10 @@ type Config struct {
 	TrustProxy bool
 	// CORSOrigins lists browser origins allowed to call the API ("*" for any).
 	CORSOrigins []string
+	// AppURL is the client app's base URL, used for links in emails.
+	AppURL string
+	// SMTP is used to send email when SMTP.Host is set; otherwise emails are logged.
+	SMTP mail.SMTPConfig
 }
 
 // Load reads configuration from environment variables.
@@ -39,6 +45,21 @@ func Load() Config {
 		MatchInterval: time.Minute,
 		AuthRateLimit: 20,
 		TrustProxy:    os.Getenv("TRUST_PROXY") == "true",
+		AppURL:        getEnv("APP_URL", "http://localhost:3000"),
+		SMTP: mail.SMTPConfig{
+			Host:     os.Getenv("SMTP_HOST"),
+			Port:     587,
+			Username: os.Getenv("SMTP_USERNAME"),
+			Password: os.Getenv("SMTP_PASSWORD"),
+			From:     getEnv("SMTP_FROM", "Lewe <no-reply@localhost>"),
+		},
+	}
+	if v := os.Getenv("SMTP_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			log.Fatalf("SMTP_PORT must be a port number, got %q", v)
+		}
+		cfg.SMTP.Port = n
 	}
 
 	if cfg.DatabaseURL == "" {

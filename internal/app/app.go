@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yeabt/lewe/internal/items"
+	"github.com/yeabt/lewe/internal/mail"
 	"github.com/yeabt/lewe/internal/matches"
 	"github.com/yeabt/lewe/internal/messages"
 	"github.com/yeabt/lewe/internal/notifications"
@@ -30,13 +31,19 @@ type Config struct {
 	AuthRateLimit int // per client IP per minute; 0 disables
 	TrustProxy    bool
 	CORSOrigins   []string
+	Mailer        mail.Mailer // nil logs emails instead of sending them
+	AppURL        string      // base URL for links in emails
 }
 
 // New builds the application: repo → service → handler for each domain.
 func New(pool *pgxpool.Pool, cfg Config) *App {
 	worker := matches.NewWorker(pool, cfg.MatchInterval)
 
-	userSvc := users.NewService(users.NewRepository(pool), users.NewRefreshTokenRepository(pool), cfg.JWTSecret)
+	userSvc := users.NewService(users.NewRepository(pool), users.NewRefreshTokenRepository(pool), users.Options{
+		JWTSecret: cfg.JWTSecret,
+		Mailer:    cfg.Mailer,
+		AppURL:    cfg.AppURL,
+	})
 	itemSvc := items.NewService(items.NewRepository(pool), worker.Trigger)
 	wantSvc := wants.NewService(wants.NewRepository(pool), worker.Trigger)
 	matchSvc := matches.NewService(matches.NewRepository(pool))

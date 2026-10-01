@@ -31,6 +31,28 @@ type UpdateProfileRequest struct {
 	AvatarURL *string `json:"avatar_url"`
 }
 
+// ChangePasswordRequest is the payload for changing a known password.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// EmailRequest carries just an email address (forgot password).
+type EmailRequest struct {
+	Email string `json:"email"`
+}
+
+// TokenRequest carries an emailed one-time token (verify email).
+type TokenRequest struct {
+	Token string `json:"token"`
+}
+
+// ResetPasswordRequest sets a new password using an emailed reset token.
+type ResetPasswordRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
 // --- Response DTOs ---
 
 // AuthResponse is returned after successful registration or login.
@@ -50,6 +72,8 @@ type UserResponse struct {
 	Bio       *string   `json:"bio,omitempty"`
 	AvatarURL *string   `json:"avatar_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+
+	EmailVerified bool `json:"email_verified"`
 }
 
 // PublicProfileResponse is the representation of a user visible to anyone.
