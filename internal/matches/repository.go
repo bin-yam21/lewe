@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/notifications"
 	"github.com/yeabt/lewe/internal/request"
 )
 
@@ -194,11 +195,8 @@ func setItemsStatus(ctx context.Context, q db.DBTX, a, b pgtype.UUID, from, to s
 // cancelOtherPendingForItems cancels pending matches (other than keep) that
 // involve either item.
 func cancelOtherPendingForItems(ctx context.Context, q db.DBTX, keep, a, b pgtype.UUID) error {
-	_, err := q.Exec(ctx,
-		`UPDATE matches SET status = 'cancelled', updated_at = now()
-		 WHERE status = 'pending' AND id <> $1
-		   AND (item_a_id IN ($2, $3) OR item_b_id IN ($2, $3))`, keep, a, b)
-	return err
+	return notifications.CancelPendingMatches(ctx, q,
+		`id <> $1 AND (item_a_id IN ($2, $3) OR item_b_id IN ($2, $3))`, keep, a, b)
 }
 
 // fulfillWants marks the wants behind a completed match as fulfilled and
@@ -209,11 +207,8 @@ func fulfillWants(ctx context.Context, q db.DBTX, keep, wantA, wantB pgtype.UUID
 		 WHERE id IN ($1, $2) AND status = 'active'`, wantA, wantB); err != nil {
 		return err
 	}
-	_, err := q.Exec(ctx,
-		`UPDATE matches SET status = 'cancelled', updated_at = now()
-		 WHERE status = 'pending' AND id <> $1
-		   AND (want_a_id IN ($2, $3) OR want_b_id IN ($2, $3))`, keep, wantA, wantB)
-	return err
+	return notifications.CancelPendingMatches(ctx, q,
+		`id <> $1 AND (want_a_id IN ($2, $3) OR want_b_id IN ($2, $3))`, keep, wantA, wantB)
 }
 
 // save writes the mutable state columns of a match.

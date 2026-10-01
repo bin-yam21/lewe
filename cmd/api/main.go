@@ -13,6 +13,7 @@ import (
 	"github.com/yeabt/lewe/internal/app"
 	"github.com/yeabt/lewe/internal/config"
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/mail"
 )
 
 func main() {
@@ -29,8 +30,24 @@ func main() {
 	pool := db.Connect(cfg.DatabaseURL)
 	defer pool.Close()
 
+	// Email: SMTP when configured, otherwise write messages to the log
+	var mailer mail.Mailer = mail.LogMailer{}
+	if cfg.SMTP.Host != "" {
+		mailer = mail.NewSMTPMailer(cfg.SMTP)
+	} else {
+		log.Println("SMTP_HOST not set; emails will be written to the log")
+	}
+
 	// Wire up dependencies
-	a := app.New(pool, cfg.JWTSecret, cfg.MatchInterval)
+	a := app.New(pool, app.Config{
+		JWTSecret:     cfg.JWTSecret,
+		MatchInterval: cfg.MatchInterval,
+		AuthRateLimit: cfg.AuthRateLimit,
+		TrustProxy:    cfg.TrustProxy,
+		CORSOrigins:   cfg.CORSOrigins,
+		Mailer:        mailer,
+		AppURL:        cfg.AppURL,
+	})
 
 	// Cancelled on SIGINT / SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

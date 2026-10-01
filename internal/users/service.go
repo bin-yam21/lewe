@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/yeabt/lewe/internal/auth"
+	"github.com/yeabt/lewe/internal/mail"
 	"github.com/yeabt/lewe/internal/validator"
 )
 
@@ -26,14 +28,31 @@ type Service struct {
 	repo      *Repository
 	tokenRepo *RefreshTokenRepository
 	jwtSecret string
+	mailer    mail.Mailer
+	appURL    string
+}
+
+// Options configures the user service.
+type Options struct {
+	JWTSecret string
+	// Mailer sends verification and password-reset emails (defaults to logging them).
+	Mailer mail.Mailer
+	// AppURL is the base URL of the client app; emailed links point at
+	// {AppURL}/verify-email?token=… and {AppURL}/reset-password?token=….
+	AppURL string
 }
 
 // NewService creates a new user service.
-func NewService(repo *Repository, tokenRepo *RefreshTokenRepository, jwtSecret string) *Service {
+func NewService(repo *Repository, tokenRepo *RefreshTokenRepository, opts Options) *Service {
+	if opts.Mailer == nil {
+		opts.Mailer = mail.LogMailer{}
+	}
 	return &Service{
 		repo:      repo,
 		tokenRepo: tokenRepo,
-		jwtSecret: jwtSecret,
+		jwtSecret: opts.JWTSecret,
+		mailer:    opts.Mailer,
+		appURL:    strings.TrimRight(opts.AppURL, "/"),
 	}
 }
 
@@ -47,10 +66,7 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (*AuthRespo
 	validator.ValidateEmail(errs, "email", req.Email)
 	validator.ValidateRequired(errs, "full_name", req.FullName)
 	validator.ValidateMaxLength(errs, "full_name", req.FullName, 100)
-	validator.ValidateRequired(errs, "password", req.Password)
-	validator.ValidateMinLength(errs, "password", req.Password, 8)
-	// bcrypt ignores everything past 72 bytes (and rejects longer input).
-	validator.ValidateMaxLength(errs, "password", req.Password, 72)
+	validatePassword(errs, "password", req.Password)
 	if errs.HasErrors() {
 		return nil, errs
 	}
@@ -65,6 +81,12 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (*AuthRespo
 	user, err := s.repo.Create(ctx, req.Email, string(hash), req.FullName, nil, nil, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// Ask the user to confirm their address. A mail failure shouldn't undo the
+	// sign-up; they can request another link.
+	if err := s.sendVerification(ctx, user); err != nil {
+		log.Printf("send verification email to user %s: %v", user.ID.String(), err)
 	}
 
 	// Generate tokens
@@ -229,6 +251,8 @@ func toUserResponse(u *UserRow) UserResponse {
 		ID:       u.ID.String(),
 		Email:    u.Email,
 		FullName: u.FullName,
+
+		EmailVerified: u.EmailVerifiedAt.Valid,
 	}
 	if u.CreatedAt.Valid {
 		resp.CreatedAt = u.CreatedAt.Time

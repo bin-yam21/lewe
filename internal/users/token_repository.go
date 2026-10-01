@@ -3,10 +3,13 @@ package users
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/yeabt/lewe/internal/db"
 )
 
 // RefreshTokenRow represents a refresh_tokens row from the database.
@@ -64,4 +67,45 @@ func (r *RefreshTokenRepository) Consume(ctx context.Context, tokenHash string) 
 		return pgtype.UUID{}, err
 	}
 	return userID, nil
+}
+
+// revokeAllForUser revokes every active refresh token of a user, signing them
+// out everywhere.
+func revokeAllForUser(ctx context.Context, q db.DBTX, userID pgtype.UUID) error {
+	_, err := q.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, userID)
+	return err
+}
+
+// Account token purposes.
+const (
+	PurposeVerifyEmail   = "verify_email"
+	PurposeResetPassword = "reset_password"
+)
+
+// createAccountToken stores a new one-time token, invalidating any earlier
+// unused tokens of the same purpose so only the latest emailed link works.
+func createAccountToken(ctx context.Context, q db.DBTX, userID pgtype.UUID, purpose, tokenHash string, expiresAt time.Time) error {
+	if _, err := q.Exec(ctx,
+		`UPDATE account_tokens SET used_at = now()
+		 WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL`, userID, purpose); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx,
+		`INSERT INTO account_tokens (user_id, purpose, token_hash, expires_at) VALUES ($1, $2, $3, $4)`,
+		userID, purpose, tokenHash, expiresAt)
+	return err
+}
+
+// consumeAccountToken atomically marks a valid token used and returns its user.
+func consumeAccountToken(ctx context.Context, q db.DBTX, purpose, tokenHash string) (pgtype.UUID, error) {
+	var userID pgtype.UUID
+	err := q.QueryRow(ctx,
+		`UPDATE account_tokens SET used_at = now()
+		 WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > now()
+		 RETURNING user_id`, tokenHash, purpose).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, ErrInvalidAccountToken
+	}
+	return userID, err
 }

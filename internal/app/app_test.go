@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/yeabt/lewe/internal/app"
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/mail"
 )
 
 // These end-to-end tests exercise the full HTTP API against a real
@@ -36,6 +38,13 @@ type env struct {
 
 func setup(t *testing.T) *env {
 	t.Helper()
+	return setupWith(t, app.Config{})
+}
+
+// setupWith is setup with extra app configuration (JWT secret and match
+// interval are filled in).
+func setupWith(t *testing.T, cfg app.Config) *env {
+	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL not set; skipping end-to-end test")
@@ -50,12 +59,13 @@ func setup(t *testing.T) *env {
 	t.Cleanup(pool.Close)
 
 	_, err = pool.Exec(context.Background(),
-		`TRUNCATE users, refresh_tokens, items, wants, matches, ratings CASCADE`)
+		`TRUNCATE users, refresh_tokens, account_tokens, items, wants, matches, ratings, messages, notifications CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
-	a := app.New(pool, testSecret, time.Hour)
+	cfg.JWTSecret, cfg.MatchInterval = testSecret, time.Hour
+	a := app.New(pool, cfg)
 	srv := httptest.NewServer(a.Handler)
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, app: a, pool: pool}
@@ -536,4 +546,254 @@ func TestHealth(t *testing.T) {
 	if out := e.must(200, "GET", "/health", "", nil); out["status"] != "ok" {
 		t.Errorf("health = %v", out)
 	}
+}
+
+// notificationTypes returns the user's notification types, newest first.
+func (e *env) notificationTypes(u user, query string) []string {
+	e.t.Helper()
+	out := []string{}
+	for _, n := range e.must(200, "GET", "/api/v1/notifications"+query, u.token, nil)["data"].([]any) {
+		out = append(out, n.(obj)["type"].(string))
+	}
+	return out
+}
+
+func (e *env) unread(u user) float64 {
+	e.t.Helper()
+	return e.must(200, "GET", "/api/v1/notifications/unread-count", u.token, nil)["unread"].(float64)
+}
+
+func TestMessagesAndNotifications(t *testing.T) {
+	e := setup(t)
+	alice, bob, carol := e.register("Alice"), e.register("Bob"), e.register("Carol")
+
+	e.item(alice, "Road bike", "sports", "good", 200)
+	e.item(bob, "Camping tent", "sports", "good", 180)
+	e.item(carol, "Tent pegs", "sports", "good", 5)
+	e.want(alice, "sports", []string{"tent"}, nil)
+	e.want(bob, "sports", []string{"bike"}, nil)
+	e.want(carol, "sports", []string{"bike"}, nil)
+	if n := e.match(); n != 2 {
+		t.Fatalf("created %d matches, want 2", n)
+	}
+
+	// Everyone involved hears about their new matches.
+	if got := e.notificationTypes(alice, ""); len(got) != 2 || got[0] != "match_found" {
+		t.Errorf("alice notifications = %v", got)
+	}
+	if got := e.unread(bob); got != 1 {
+		t.Errorf("bob unread = %v, want 1", got)
+	}
+
+	var matchID string
+	for _, m := range e.matches(bob, "") {
+		matchID = m.(obj)["id"].(string)
+	}
+	path := "/api/v1/matches/" + matchID
+
+	// Chat between the two participants only.
+	e.must(422, "POST", path+"/messages", alice.token, obj{"body": "   "})
+	e.must(422, "POST", path+"/messages", alice.token, obj{"body": strings.Repeat("x", 2001)})
+	e.must(404, "POST", path+"/messages", carol.token, obj{"body": "hi"})
+	e.must(404, "GET", path+"/messages", carol.token, nil)
+	msg := e.must(201, "POST", path+"/messages", alice.token, obj{"body": " Is the tent waterproof? "})
+	if msg["body"] != "Is the tent waterproof?" || msg["from_you"] != true {
+		t.Errorf("message = %v", msg)
+	}
+	e.must(201, "POST", path+"/messages", bob.token, obj{"body": "Yes, 3000mm."})
+
+	msgs := e.must(200, "GET", path+"/messages", bob.token, nil)["data"].([]any)
+	if len(msgs) != 2 || msgs[0].(obj)["from_you"] != false || msgs[1].(obj)["body"] != "Yes, 3000mm." {
+		t.Errorf("bob's view of messages = %v", msgs)
+	}
+	if got := e.notificationTypes(bob, "?unread=true"); len(got) != 2 || got[0] != "message_received" {
+		t.Errorf("bob unread notifications = %v", got)
+	}
+
+	// Each step of the lifecycle notifies the other participant.
+	e.must(200, "POST", path+"/accept", alice.token, nil)
+	if got := e.notificationTypes(bob, "")[0]; got != "match_accepted" {
+		t.Errorf("bob latest = %s, want match_accepted", got)
+	}
+	e.must(200, "POST", path+"/accept", bob.token, nil)
+	if got := e.notificationTypes(alice, "")[0]; got != "match_confirmed" {
+		t.Errorf("alice latest = %s, want match_confirmed", got)
+	}
+	// Carol's competing match for Alice's bike was cancelled; she is told.
+	if got := e.notificationTypes(carol, "")[0]; got != "match_cancelled" {
+		t.Errorf("carol latest = %s, want match_cancelled", got)
+	}
+	e.must(200, "PUT", path+"/exchange", alice.token, obj{"method": "meetup"})
+	if got := e.notificationTypes(bob, "")[0]; got != "exchange_updated" {
+		t.Errorf("bob latest = %s, want exchange_updated", got)
+	}
+	e.must(200, "POST", path+"/complete", alice.token, nil)
+	e.must(200, "POST", path+"/complete", bob.token, nil)
+	if got := e.notificationTypes(alice, "")[0]; got != "match_completed" {
+		t.Errorf("alice latest = %s, want match_completed", got)
+	}
+	e.must(201, "POST", path+"/rating", alice.token, obj{"score": 5})
+	bobLatest := e.must(200, "GET", "/api/v1/notifications?limit=1", bob.token, nil)["data"].([]any)[0].(obj)
+	if bobLatest["type"] != "rating_received" || bobLatest["match_id"] != matchID || bobLatest["message"] == "" {
+		t.Errorf("bob latest = %v", bobLatest)
+	}
+
+	// Chat stays open after completion but closes on cancelled matches.
+	e.must(201, "POST", path+"/messages", bob.token, obj{"body": "Thanks!"})
+	var carolMatch string
+	for _, m := range e.matches(carol, "") {
+		carolMatch = m.(obj)["id"].(string)
+	}
+	e.must(409, "POST", "/api/v1/matches/"+carolMatch+"/messages", carol.token, obj{"body": "hello?"})
+	e.must(200, "GET", "/api/v1/matches/"+carolMatch+"/messages", carol.token, nil)
+
+	// Marking notifications read.
+	n := e.must(200, "GET", "/api/v1/notifications?unread=true", alice.token, nil)["data"].([]any)
+	before := e.unread(alice)
+	e.must(204, "POST", "/api/v1/notifications/"+n[0].(obj)["id"].(string)+"/read", alice.token, nil)
+	if got := e.unread(alice); got != before-1 {
+		t.Errorf("unread after marking one = %v, want %v", got, before-1)
+	}
+	e.must(404, "POST", "/api/v1/notifications/"+n[0].(obj)["id"].(string)+"/read", bob.token, nil)
+	e.must(404, "POST", "/api/v1/notifications/nope/read", alice.token, nil)
+	e.must(204, "POST", "/api/v1/notifications/read-all", alice.token, nil)
+	if got := e.unread(alice); got != 0 {
+		t.Errorf("unread after read-all = %v", got)
+	}
+	if got := len(e.notificationTypes(alice, "?unread=true")); got != 0 {
+		t.Errorf("unread list = %d", got)
+	}
+	e.must(401, "GET", "/api/v1/notifications", "", nil)
+}
+
+func TestAuthRateLimit(t *testing.T) {
+	e := setupWith(t, app.Config{AuthRateLimit: 3})
+	body := obj{"email": "nobody@example.com", "password": "password123"}
+	for i := 0; i < 3; i++ {
+		e.must(401, "POST", "/api/v1/auth/login", "", body)
+	}
+	e.must(429, "POST", "/api/v1/auth/login", "", body)
+	e.must(429, "POST", "/api/v1/auth/register", "", body)
+	// Other routes are not limited.
+	e.must(200, "GET", "/api/v1/items", "", nil)
+}
+
+func TestCORS(t *testing.T) {
+	e := setupWith(t, app.Config{CORSOrigins: []string{"https://app.example.com"}})
+	req, _ := http.NewRequest("OPTIONS", e.srv.URL+"/api/v1/items", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 204 || resp.Header.Get("Access-Control-Allow-Origin") != "https://app.example.com" {
+		t.Errorf("preflight: %d %v", resp.StatusCode, resp.Header)
+	}
+}
+
+var tokenInLink = regexp.MustCompile(`https://app\.test/([a-z-]+)\?token=([0-9a-f]{64})`)
+
+// lastLink returns the page and token of the newest email sent to addr.
+func lastLink(t *testing.T, m *mail.MemoryMailer, addr string) (page, token string) {
+	t.Helper()
+	sent := m.Sent()
+	for i := len(sent) - 1; i >= 0; i-- {
+		if sent[i].To == addr {
+			match := tokenInLink.FindStringSubmatch(sent[i].Body)
+			if match == nil {
+				t.Fatalf("no link in email: %q", sent[i].Body)
+			}
+			return match[1], match[2]
+		}
+	}
+	t.Fatalf("no email sent to %s", addr)
+	return "", ""
+}
+
+func TestEmailVerificationAndPasswordReset(t *testing.T) {
+	mailer := &mail.MemoryMailer{}
+	e := setupWith(t, app.Config{Mailer: mailer, AppURL: "https://app.test/"})
+
+	// Signing up sends a verification link.
+	out := e.must(201, "POST", "/api/v1/auth/register", "", obj{
+		"email": "alice@example.com", "password": "password123", "full_name": "Alice",
+	})
+	alice := user{id: out["user"].(obj)["id"].(string), token: out["access_token"].(string), refresh: out["refresh_token"].(string)}
+	if out["user"].(obj)["email_verified"] != false {
+		t.Errorf("new user should be unverified: %v", out["user"])
+	}
+	if sent := mailer.Sent(); len(sent) != 1 || sent[0].Subject != "Confirm your email for Lewe" {
+		t.Fatalf("sent = %+v", sent)
+	}
+	page, verifyToken := lastLink(t, mailer, "alice@example.com")
+	if page != "verify-email" {
+		t.Errorf("link page = %s", page)
+	}
+
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": strings.Repeat("0", 64)})
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": ""})
+	e.must(204, "POST", "/api/v1/auth/verify-email", "", obj{"token": verifyToken})
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": verifyToken}) // single use
+	if me := e.must(200, "GET", "/api/v1/users/me", alice.token, nil); me["email_verified"] != true {
+		t.Errorf("after verifying: %v", me)
+	}
+	e.must(409, "POST", "/api/v1/users/me/verify-email", alice.token, nil)
+
+	// Resending replaces the earlier link.
+	bob := e.register("Bob")
+	_, firstBob := lastLink(t, mailer, "bob@example.com")
+	e.must(202, "POST", "/api/v1/users/me/verify-email", bob.token, nil)
+	_, secondBob := lastLink(t, mailer, "bob@example.com")
+	if firstBob == secondBob {
+		t.Fatal("resend should issue a new token")
+	}
+	e.must(400, "POST", "/api/v1/auth/verify-email", "", obj{"token": firstBob})
+	e.must(204, "POST", "/api/v1/auth/verify-email", "", obj{"token": secondBob})
+
+	// Forgot password never reveals whether an account exists.
+	before := len(mailer.Sent())
+	unknown := e.must(202, "POST", "/api/v1/auth/forgot-password", "", obj{"email": "nobody@example.com"})
+	known := e.must(202, "POST", "/api/v1/auth/forgot-password", "", obj{"email": " ALICE@example.com "})
+	if unknown["message"] != known["message"] {
+		t.Errorf("responses differ: %v vs %v", unknown, known)
+	}
+	if got := len(mailer.Sent()) - before; got != 1 {
+		t.Fatalf("expected exactly one reset email, got %d", got)
+	}
+	e.must(422, "POST", "/api/v1/auth/forgot-password", "", obj{"email": "not-an-email"})
+
+	page, resetToken := lastLink(t, mailer, "alice@example.com")
+	if page != "reset-password" {
+		t.Errorf("link page = %s", page)
+	}
+	e.must(422, "POST", "/api/v1/auth/reset-password", "", obj{"token": resetToken, "password": "short"})
+	e.must(204, "POST", "/api/v1/auth/reset-password", "", obj{"token": resetToken, "password": "new-password-1"})
+	e.must(400, "POST", "/api/v1/auth/reset-password", "", obj{"token": resetToken, "password": "new-password-2"})
+
+	// The reset signed Alice out everywhere and replaced the password.
+	e.must(401, "POST", "/api/v1/auth/refresh", "", obj{"refresh_token": alice.refresh})
+	e.must(401, "POST", "/api/v1/auth/login", "", obj{"email": "alice@example.com", "password": "password123"})
+	login := e.must(200, "POST", "/api/v1/auth/login", "", obj{"email": "alice@example.com", "password": "new-password-1"})
+	token := login["access_token"].(string)
+
+	// Changing a known password: wrong current password is a field error.
+	out = e.must(422, "PUT", "/api/v1/users/me/password", token, obj{"current_password": "nope", "new_password": "another-pass-3"})
+	if out["fields"].(obj)["current_password"] != "is incorrect" {
+		t.Errorf("fields = %v", out["fields"])
+	}
+	e.must(401, "PUT", "/api/v1/users/me/password", "", obj{"current_password": "x", "new_password": "y"})
+	changed := e.must(200, "PUT", "/api/v1/users/me/password", token, obj{"current_password": "new-password-1", "new_password": "another-pass-3"})
+	e.must(401, "POST", "/api/v1/auth/refresh", "", obj{"refresh_token": login["refresh_token"]})
+	e.must(200, "POST", "/api/v1/auth/refresh", "", obj{"refresh_token": changed["refresh_token"]})
+	e.must(200, "POST", "/api/v1/auth/login", "", obj{"email": "alice@example.com", "password": "another-pass-3"})
+
+	// Expired links are rejected.
+	e.must(202, "POST", "/api/v1/auth/forgot-password", "", obj{"email": "bob@example.com"})
+	_, bobReset := lastLink(t, mailer, "bob@example.com")
+	if _, err := e.pool.Exec(context.Background(), `UPDATE account_tokens SET expires_at = now() - interval '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	e.must(400, "POST", "/api/v1/auth/reset-password", "", obj{"token": bobReset, "password": "whatever-123"})
 }

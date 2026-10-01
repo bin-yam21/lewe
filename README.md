@@ -3,8 +3,8 @@
 Lewe is a barter marketplace API written in Go. People list items they want to
 give away, describe what they want in return, and a background worker finds
 **two-way swaps**: you have something I want, and I have something you want.
-Both sides accept, agree how to exchange, confirm the hand-over, and rate each
-other.
+Both sides accept, chat and agree how to exchange, confirm the hand-over, and
+rate each other. In-app notifications keep both users up to date.
 
 ## Quick start
 
@@ -22,6 +22,14 @@ Or run everything in Docker: `docker compose up --build`.
 | `JWT_SECRET`     | yes      | —       | HMAC secret for access tokens (use 32+ random chars) |
 | `PORT`           | no       | `:8080` | Listen address (`8080` or `:8080`) |
 | `MATCH_INTERVAL` | no       | `1m`    | How often the matching worker runs |
+| `AUTH_RATE_LIMIT` | no      | `20`    | `/auth/*` requests per client IP per minute; `0` disables |
+| `TRUST_PROXY`    | no       | `false` | Use `X-Forwarded-For` as the client IP (only behind a proxy) |
+| `CORS_ALLOWED_ORIGINS` | no | —       | Comma-separated browser origins allowed to call the API, or `*` |
+| `APP_URL`        | no       | `http://localhost:3000` | Client app base URL for links in emails |
+| `SMTP_HOST`      | no       | —       | SMTP server; when unset, emails are written to the log |
+| `SMTP_PORT`      | no       | `587`   | STARTTLS when offered; `465` uses implicit TLS |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | no | — | SMTP credentials |
+| `SMTP_FROM`      | no       | `Lewe <no-reply@localhost>` | Sender address |
 
 ## Testing
 
@@ -70,13 +78,25 @@ Validation failures return `422` with `{"error": ..., "fields": {field: message}
 | `POST` | `/auth/login` | — | `{email, password}` → tokens + user |
 | `POST` | `/auth/refresh` | — | `{refresh_token}` → new token pair (old one is revoked) |
 | `POST` | `/auth/logout` | — | `{refresh_token}` → revokes it |
+| `POST` | `/auth/verify-email` | — | `{token}` from the emailed link → marks the email verified |
+| `POST` | `/auth/forgot-password` | — | `{email}` → emails a reset link if the account exists (always `202`) |
+| `POST` | `/auth/reset-password` | — | `{token, password}` → new password; signs out all sessions |
 | `GET` | `/users/me` | ✓ | Your profile |
 | `PUT` | `/users/me` | ✓ | `{full_name, phone?, location?, bio?, avatar_url?}` |
+| `PUT` | `/users/me/password` | ✓ | `{current_password, new_password}` → fresh tokens; other sessions signed out |
+| `POST` | `/users/me/verify-email` | ✓ | Email a new verification link |
 | `GET` | `/users/me/items` | ✓ | Your items, any status (`?status=`) |
 | `GET` | `/users/{id}` | — | Public profile with rating average and count |
 | `GET` | `/users/{id}/ratings` | — | Ratings a user has received |
 
 Access tokens last 15 minutes; refresh tokens last 7 days and are single-use.
+Auth routes are rate limited per IP (`429` with a `Retry-After` header).
+
+Signing up sends a verification email; `email_verified` on the profile shows
+the result. Emailed links point at `APP_URL/verify-email?token=…` and
+`APP_URL/reset-password?token=…`; the client app reads the token and posts it
+to the API. Verification links last 48 hours, reset links 1 hour, and each
+works once (a newer link replaces older ones).
 
 ### Items
 
@@ -115,11 +135,29 @@ Item status: `available` → `reserved` (accepted match) → `exchanged`, or `wi
 | `POST` | `/matches/{id}/complete` | ✓ | Confirm you've handed over your item |
 | `POST` | `/matches/{id}/cancel` | ✓ | Back out of an accepted match |
 | `POST` | `/matches/{id}/rating` | ✓ | `{score: 1–5, comment?}` once the match is completed |
+| `GET` | `/matches/{id}/messages` | ✓ | Chat history, oldest first |
+| `POST` | `/matches/{id}/messages` | ✓ | `{body}` — allowed unless the match was declined or cancelled |
 
 A match is returned relative to the viewer: `your_item`, `their_item`,
 `other_user`, `you_accepted`/`they_accepted`, `exchange`,
 `you_completed`/`they_completed` and `you_rated`. Changing the exchange method
 or details resets both completion confirmations.
+
+### Notifications
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/notifications` | ✓ | Newest first (`?unread=true`) |
+| `GET` | `/notifications/unread-count` | ✓ | `{unread: n}` |
+| `POST` | `/notifications/{id}/read` | ✓ | Mark one as read |
+| `POST` | `/notifications/read-all` | ✓ | Mark all as read |
+
+Each notification has a `type`, a human-readable `message`, a `match_id` and
+`read`. Types: `match_found`, `match_accepted`, `match_confirmed`,
+`match_declined`, `match_cancelled`, `exchange_updated`, `match_completed`,
+`message_received`, `rating_received`. Actions notify the *other* participant;
+matches cancelled as a side effect (a competing match was confirmed, an item was
+withdrawn, a want was cancelled or fulfilled) notify both users.
 
 `GET /health` returns `{"status": "ok"}`.
 
@@ -134,8 +172,11 @@ internal/items/       listings               │ each: handler → service → r
 internal/wants/       wants                  │
 internal/matches/     match lifecycle + worker
 internal/ratings/     ratings                ┘
+internal/messages/    chat within a match
+internal/notifications/ in-app notifications
+internal/mail/        SMTP and log mailers
 internal/db/          pgx pool, transactions, embedded SQL migrations
-internal/middleware/  auth, logging, panic recovery
+internal/middleware/  auth, logging, panic recovery, rate limiting, CORS
 internal/request/     JSON decoding, path IDs, pagination
 internal/response/    JSON response helpers
 internal/validator/   input validation

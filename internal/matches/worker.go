@@ -22,6 +22,9 @@ import (
 // pair, DISTINCT ON keeps the highest scoring one. Pairs that were matched
 // before — including declined ones — are skipped by the unique constraint.
 //
+// Both users of every new match get a match_found notification in the same
+// statement, and the statement returns how many matches were created.
+//
 // The score (0–1) favours swaps of similar estimated value; when either value
 // is unknown it defaults to 0.5.
 const findMatchesSQL = `
@@ -43,7 +46,8 @@ WITH want_items AS (
           )
      )
     WHERE w.status = 'active'
-)
+),
+inserted AS (
 INSERT INTO matches (user_a_id, item_a_id, want_a_id, user_b_id, item_b_id, want_b_id, score)
 SELECT DISTINCT ON (ia.item_id, ib.item_id)
        ia.owner_id, ia.item_id, ib.want_id,
@@ -60,7 +64,16 @@ JOIN want_items ib
  AND ib.owner_id  = ia.wanter_id
 WHERE ia.item_id < ib.item_id
 ORDER BY ia.item_id, ib.item_id, score DESC
-ON CONFLICT (item_a_id, item_b_id) DO NOTHING`
+ON CONFLICT (item_a_id, item_b_id) DO NOTHING
+RETURNING id, user_a_id, user_b_id
+),
+notified AS (
+    INSERT INTO notifications (user_id, type, match_id)
+    SELECT user_a_id, 'match_found', id FROM inserted
+    UNION ALL
+    SELECT user_b_id, 'match_found', id FROM inserted
+)
+SELECT COUNT(*) FROM inserted`
 
 // Worker periodically scans listings and wants for new matches.
 type Worker struct {
@@ -80,11 +93,9 @@ func NewWorker(pool *pgxpool.Pool, interval time.Duration) *Worker {
 
 // RunOnce performs a single matching pass and returns the number of new matches.
 func (w *Worker) RunOnce(ctx context.Context) (int64, error) {
-	tag, err := w.pool.Exec(ctx, findMatchesSQL)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
+	var n int64
+	err := w.pool.QueryRow(ctx, findMatchesSQL).Scan(&n)
+	return n, err
 }
 
 // Trigger asks the worker to run a pass soon without waiting for the next tick.

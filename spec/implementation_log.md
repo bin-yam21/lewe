@@ -131,9 +131,110 @@ internal/request/   → Body decoding (1 MiB cap), UUID path params, pagination
 
 ### Not Done / Possible Next Steps
 
+See Phase 2 below.
+
+---
+
+## Phase 2 — Communication & Hardening (2026-09-30)
+
+### What Was Built
+
+- **Messaging** (`internal/messages`): a chat thread per match. Participants
+  can post while the match is pending, accepted or completed; declined or
+  cancelled matches keep their history readable but reject new messages.
+- **In-app notifications** (`internal/notifications`): the matching worker,
+  every match transition, messages and ratings notify the affected users.
+  Endpoints list them, count unread and mark one/all as read.
+- **Auth rate limiting**: per-IP token bucket on `/auth/*` (`AUTH_RATE_LIMIT`,
+  default 20/min), `429` + `Retry-After`. `TRUST_PROXY` uses
+  `X-Forwarded-For` behind a reverse proxy.
+- **CORS** for browser clients (`CORS_ALLOWED_ORIGINS`).
+- `app.New` now takes an `app.Config`; `router.New` takes `router.Options`.
+
+### Database Schema
+
+**messages**: match, sender, body, created_at. Indexed by `(match_id, created_at)`.
+
+**notifications**: user, type, match, read_at, created_at. Partial index on
+unread rows for the unread count.
+
+### Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Notifications written in the same transaction as the event** | A notification can never describe something that was rolled back, and never goes missing for something that happened |
+| **Worker notifies inside its single SQL statement** | `INSERT … RETURNING` feeds a second `INSERT` into notifications via data-modifying CTEs — still one round trip |
+| **`notifications.CancelPendingMatches` helper** | Items, wants and matches all cancel pending matches as a side effect; one helper cancels them and notifies both users consistently |
+| **`created_at DEFAULT clock_timestamp()` on notifications** | One transaction can create several notifications for the same user (e.g. "confirmed" plus "competing match cancelled"). `now()` is fixed per transaction, which made their order random; `clock_timestamp()` preserves insertion order |
+| **Notification text generated from `type`** | Clients get a ready-to-show `message` but can localise by `type` |
+| **In-memory rate limiter** | No new dependency or infrastructure; fine for a single instance. Multiple instances would need a shared store (e.g. Redis) |
+| **Rate limiting only on `/auth/*`** | Those are the endpoints worth brute-forcing; everything else requires a token |
+
+### Verification
+
+- `go build`, `go vet`, `gofmt` — ✅
+- Unit tests for the rate limiter (refill, per-client buckets, sweeping, proxy
+  header) and CORS — ✅
+- End-to-end tests for messaging, the notification for every lifecycle step,
+  read/unread handling, auth rate limiting and CORS preflight
+  (`go test -race ./...`, repeated runs) — ✅
+- Smoke test of the built binary and all down migrations in reverse order — ✅
+
+### Still Not Done
+
+See Phase 3 below.
+
+---
+
+## Phase 3 — Account Recovery (2026-10-01)
+
+### What Was Built
+
+- **Email verification**: sign-up emails a link; `POST /auth/verify-email`
+  confirms it; `POST /users/me/verify-email` sends a new one. Profiles expose
+  `email_verified`.
+- **Password reset**: `POST /auth/forgot-password` emails a 1-hour link;
+  `POST /auth/reset-password` sets the new password, signs out every session
+  and marks the email verified.
+- **Change password**: `PUT /users/me/password` checks the current password,
+  signs out other sessions and returns a fresh token pair.
+- **`internal/mail`**: `Mailer` interface with an SMTP implementation
+  (STARTTLS or implicit TLS on 465, header-injection safe), a log mailer for
+  development and an in-memory mailer for tests.
+- The users repository now scans through one `userColumns` list.
+
+### Database Schema
+
+**users**: + `email_verified_at`.
+
+**account_tokens**: user, purpose (`verify_email` / `reset_password`),
+token_hash (unique), expires_at, used_at.
+
+### Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Hash emailed tokens like refresh tokens** | A database leak doesn't expose working links |
+| **Consume with one `UPDATE … RETURNING`** | A link can't be used twice, even concurrently |
+| **A new link invalidates older unused ones** | Only the most recent email works |
+| **Forgot-password always returns 202 with the same message** | Callers can't discover which emails have accounts |
+| **Mail failures don't fail sign-up or forgot-password** | They're logged; the user can request another link |
+| **Verification isn't enforced yet** | `email_verified` is exposed so a policy (e.g. verified users only can list items) can be added later without a schema change |
+| **Log mailer by default** | Local development works with no SMTP server; links appear in the server log |
+
+### Verification
+
+- End-to-end test of sign-up verification, resend (older link stops working),
+  forgot/reset password (no account enumeration, single use, sessions
+  revoked, expiry), and change password — ✅
+- Unit test for email header injection — ✅
+- `go test -race ./...`, `make lint`, down migrations, and a smoke test
+  showing emailed links in the log without SMTP — ✅
+
+### Still Not Done
+
 - Image upload (items take image URLs only)
-- Notifications (email/push) when a match is found or changes
-- Messaging between matched users
-- Multi-party (A→B→C→A) cycles; matching is two-way only
-- Rate limiting on auth endpoints
+- Email/push delivery of notifications (they are in-app only)
+- Real-time delivery (WebSocket/SSE); clients poll `/notifications/unread-count`
+- Multi-party (A→B→C→A) swap cycles; matching is two-way only
 - The sqlc query files still cover only users and refresh tokens; repositories use pgx directly

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yeabt/lewe/internal/db"
+	"github.com/yeabt/lewe/internal/notifications"
 	"github.com/yeabt/lewe/internal/request"
 )
 
@@ -155,10 +156,7 @@ func (r *Repository) Withdraw(ctx context.Context, id pgtype.UUID) error {
 		if tag.RowsAffected() == 0 {
 			return ErrItemNotFound
 		}
-		_, err = tx.Exec(ctx,
-			`UPDATE matches SET status = 'cancelled', updated_at = now()
-			 WHERE status = 'pending' AND (item_a_id = $1 OR item_b_id = $1)`, id)
-		return err
+		return notifications.CancelPendingMatches(ctx, tx, `item_a_id = $1 OR item_b_id = $1`, id)
 	})
 }
 
