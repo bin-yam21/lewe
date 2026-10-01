@@ -6,6 +6,35 @@ give away, describe what they want in return, and a background worker finds
 Both sides accept, chat and agree how to exchange, confirm the hand-over, and
 rate each other. In-app notifications keep both users up to date.
 
+People use Lewe through a **Telegram Mini App** (`webapp/`): they open it from
+the bot, are signed in with their Telegram account, and get match alerts as
+Telegram messages. The Go server serves the app and the API from one origin.
+
+## Telegram Mini App
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy its token.
+2. Deploy the server on a public **HTTPS** URL (Telegram only opens Mini Apps over HTTPS).
+3. Set `TELEGRAM_BOT_TOKEN` and `APP_URL=https://your-domain` and start the server. On
+   start-up it sets the bot's menu button to open the app at `APP_URL`.
+4. Optionally register the app with BotFather (`/newapp`) to get a `t.me/<bot>/<app>` link.
+   Start parameters `match_<id>` and `item_<id>` open a specific match or item.
+
+How it works:
+
+- **Sign-in**: the app posts `Telegram.WebApp.initData` to `POST /api/v1/auth/telegram`.
+  The server checks Telegram's HMAC signature with the bot token (and that the data is
+  under 24 hours old), then signs in or creates the account linked to that Telegram id.
+  These accounts have no email or password.
+- **Notifications**: every in-app notification is also sent as a bot message with an
+  "Open match" button. Delivery uses the notifications table as an outbox and retries
+  until Telegram accepts it; users who blocked the bot are skipped.
+- **Theme**: the app uses Telegram's theme colors, its main and back buttons, haptics
+  and native confirm dialogs, so it looks native in light and dark mode.
+
+Local development: `make webapp-dev` runs the app on `:5173` with `/api` proxied to the
+API on `:8080`. Outside Telegram the app shows an email sign-in for testing.
+`make webapp` builds it into `webapp/dist`, which the API serves at `/`.
+
 ## Quick start
 
 ```sh
@@ -25,11 +54,14 @@ Or run everything in Docker: `docker compose up --build`.
 | `AUTH_RATE_LIMIT` | no      | `20`    | `/auth/*` requests per client IP per minute; `0` disables |
 | `TRUST_PROXY`    | no       | `false` | Use `X-Forwarded-For` as the client IP (only behind a proxy) |
 | `CORS_ALLOWED_ORIGINS` | no | —       | Comma-separated browser origins allowed to call the API, or `*` |
-| `APP_URL`        | no       | `http://localhost:3000` | Client app base URL for links in emails |
+| `APP_URL`        | no       | `http://localhost:8080` | Public URL of the app, used in emailed links and Telegram buttons |
 | `SMTP_HOST`      | no       | —       | SMTP server; when unset, emails are written to the log |
 | `SMTP_PORT`      | no       | `587`   | STARTTLS when offered; `465` uses implicit TLS |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | no | — | SMTP credentials |
 | `SMTP_FROM`      | no       | `Lewe <no-reply@localhost>` | Sender address |
+| `TELEGRAM_BOT_TOKEN` | no   | —       | Enables Telegram sign-in, the menu button and Telegram notifications |
+| `UPLOAD_DIR`     | no       | `data/uploads` | Where uploaded photos are stored |
+| `WEBAPP_DIR`     | no       | `webapp/dist` | Built Mini App, served at `/` when present |
 
 ## Testing
 
@@ -58,8 +90,10 @@ throwaway database.
 ```
 
 A want matches an item when the category is the same, the item is at least the
-want's `min_condition`, and — if the want has keywords — at least one keyword
-appears in the item's title or description. A match's `score` (0–1) is higher
+want's `min_condition`, if the want has keywords at least one appears in the
+item's title or description, and both people are in the same city. A want with
+`any_city` (for example, someone happy to ship) also matches other cities; both
+sides of a swap must allow it. Users without a city match anywhere. A match's `score` (0–1) is higher
 when the two items have similar estimated values. Each pair of items is only
 ever matched once, so a declined or cancelled swap is not suggested again.
 
@@ -78,11 +112,12 @@ Validation failures return `422` with `{"error": ..., "fields": {field: message}
 | `POST` | `/auth/login` | — | `{email, password}` → tokens + user |
 | `POST` | `/auth/refresh` | — | `{refresh_token}` → new token pair (old one is revoked) |
 | `POST` | `/auth/logout` | — | `{refresh_token}` → revokes it |
+| `POST` | `/auth/telegram` | — | `{init_data}` from the Mini App → tokens + user |
 | `POST` | `/auth/verify-email` | — | `{token}` from the emailed link → marks the email verified |
 | `POST` | `/auth/forgot-password` | — | `{email}` → emails a reset link if the account exists (always `202`) |
 | `POST` | `/auth/reset-password` | — | `{token, password}` → new password; signs out all sessions |
 | `GET` | `/users/me` | ✓ | Your profile |
-| `PUT` | `/users/me` | ✓ | `{full_name, phone?, location?, bio?, avatar_url?}` |
+| `PUT` | `/users/me` | ✓ | `{full_name, phone?, location?, bio?, avatar_url?, city?}` (`city` from `/categories`) |
 | `PUT` | `/users/me/password` | ✓ | `{current_password, new_password}` → fresh tokens; other sessions signed out |
 | `POST` | `/users/me/verify-email` | ✓ | Email a new verification link |
 | `GET` | `/users/me/items` | ✓ | Your items, any status (`?status=`) |
@@ -102,7 +137,8 @@ works once (a newer link replaces older ones).
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| `GET` | `/categories` | — | Valid categories, conditions and exchange methods |
+| `GET` | `/categories` | — | Valid categories, conditions, exchange methods and cities |
+| `POST` | `/uploads` | ✓ | Multipart `file` (JPEG, PNG or WebP, ≤ 8 MB) → `{url}` for `image_urls` or `avatar_url` |
 | `GET` | `/items` | — | Browse available items (`?category=`, `?q=`, `?owner_id=`) |
 | `POST` | `/items` | ✓ | Create a listing |
 | `GET` | `/items/{id}` | optional | One item (withdrawn items are visible only to their owner) |
@@ -118,7 +154,7 @@ Item status: `available` → `reserved` (accepted match) → `exchanged`, or `wi
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | `GET` | `/wants` | ✓ | Your wants (`?status=active\|fulfilled\|cancelled`) |
-| `POST` | `/wants` | ✓ | `{category, keywords?: [...], min_condition?}` |
+| `POST` | `/wants` | ✓ | `{category, keywords?: [...], min_condition?, any_city?}` |
 | `GET` | `/wants/{id}` | ✓ | One of your wants |
 | `PUT` | `/wants/{id}` | ✓ | Replace an active want |
 | `DELETE` | `/wants/{id}` | ✓ | Cancel a want and its pending matches |
@@ -175,6 +211,9 @@ internal/ratings/     ratings                ┘
 internal/messages/    chat within a match
 internal/notifications/ in-app notifications
 internal/mail/        SMTP and log mailers
+internal/telegram/    Mini App sign-in verification and Bot API client
+internal/uploads/     photo uploads
+webapp/               Telegram Mini App (React + Vite + TypeScript)
 internal/db/          pgx pool, transactions, embedded SQL migrations
 internal/middleware/  auth, logging, panic recovery, rate limiting, CORS
 internal/request/     JSON decoding, path IDs, pagination

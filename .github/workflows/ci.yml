@@ -33,3 +33,19 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://lewe:lewe@localhost:5432/lewe_test?sslmode=disable
         run: go test -race ./...
+
+  webapp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck and build
+        run: npm run build

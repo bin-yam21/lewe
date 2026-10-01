@@ -233,8 +233,71 @@ token_hash (unique), expires_at, used_at.
 
 ### Still Not Done
 
-- Image upload (items take image URLs only)
-- Email/push delivery of notifications (they are in-app only)
-- Real-time delivery (WebSocket/SSE); clients poll `/notifications/unread-count`
+See Phase 4 below.
+
+---
+
+## Phase 4 — Telegram Mini App (2026-10-01)
+
+The product's front end is a Telegram Mini App. (An earlier Expo app on the
+`feat/exchange-loop-and-mobile-app` branch targeted a different, older API and
+was dropped.)
+
+### API
+
+- **Telegram sign-in** (`POST /auth/telegram`, `internal/telegram`): verifies
+  `initData` with HMAC-SHA256 keyed by `HMAC("WebAppData", bot token)`,
+  rejects data older than 24 h, and upserts the user by `telegram_id`. Email and
+  password became optional (a CHECK keeps one of email or Telegram id).
+- **Telegram notifications** (`notifications.Dispatcher`): the notifications
+  table is an outbox (`delivered_at`). Every 5 s pending rows are claimed with
+  `FOR UPDATE … SKIP LOCKED` and sent as bot messages with a web-app button to
+  `APP_URL#/matches/<id>`. Failures leave rows pending; a 403 (bot blocked) marks
+  them delivered. Existing rows were marked delivered by the migration.
+- **Photo uploads** (`POST /uploads`, `internal/uploads`): type detected from
+  the bytes (JPEG/PNG/WebP only, never SVG), 8 MB cap, random names, served at
+  `/uploads/{name}` with `nosniff` and immutable caching. `image_urls` and
+  `avatar_url` accept `/uploads/…` paths.
+- **City-aware matching**: `users.city` from a fixed list of Ethiopian cities;
+  `wants.any_city`. The worker only pairs users in the same city unless both
+  wants allow any city (or a user has no city).
+- The server serves the built app from `WEBAPP_DIR` with SPA fallback.
+
+### Mini App (`webapp/`)
+
+React 19 + Vite + TypeScript, no UI kit or router library.
+
+| Screen | What it does |
+|---|---|
+| Browse | Search, category chips, photo grid, "load more" paging, city prompt |
+| Item | Photo gallery, owner with rating and city, "I want something like this", edit/withdraw for owners |
+| List item | Photo upload (downscaled to 1600 px JPEG in the browser), category, condition, value in Birr, area; Telegram MainButton submits |
+| Swaps | In progress / Swapped / Closed, each card says whose turn it is |
+| Swap | Both items, progress steps, accept/decline (MainButton), plan the exchange, confirm hand-over, cancel, rate, and the chat (polled every 5 s) |
+| Me | Avatar, rating, city, wants (add/remove), listings, notifications |
+
+Telegram integration: theme variables (light and dark follow the user's
+Telegram theme), BackButton, MainButton, haptics, native confirm dialogs,
+`requestWriteAccess` so the bot can message the user, and start parameters /
+`#/matches/<id>` links from bot messages. Outside Telegram it falls back to an
+email sign-in for development. Tokens refresh once on 401 (concurrent 401s share
+one refresh), falling back to re-signing in with Telegram.
+
+### Verification
+
+- Go: unit tests for init-data verification (valid, wrong token, tampered,
+  expired, malformed) and the Bot API client; upload tests (type sniffing, SVG
+  and HTML rejected, size limit, path traversal); end-to-end tests for Telegram
+  sign-in, notification delivery (retry and blocked bot), uploads in listings
+  and city matching. `go test -race ./...` passes.
+- Mini App: `tsc` and `vite build` pass. A Playwright run against the real
+  server, with a Telegram SDK stand-in and signed init data, completed a whole
+  swap through the UI: accept via MainButton, plan meetup, chat, both confirm,
+  rate — in Telegram's light and dark themes at phone width, with no page errors.
+
+### Still Not Done
+
+- Not yet tried inside a real Telegram client (needs a bot token and HTTPS host)
+- Photos are stored on local disk; swap `uploads.Store` for S3/R2 when running more than one instance
+- Real-time chat (it polls); Amharic translation of the app
 - Multi-party (A→B→C→A) swap cycles; matching is two-way only
-- The sqlc query files still cover only users and refresh tokens; repositories use pgx directly

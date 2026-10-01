@@ -1,6 +1,6 @@
 TEST_DATABASE_URL ?= postgres://lewe:lewe@localhost:5432/lewe_test?sslmode=disable
 
-.PHONY: run build test test-unit lint db-up db-down
+.PHONY: run build test test-unit lint db-up db-down webapp webapp-dev
 
 run:
 	go run ./cmd/api
@@ -19,6 +19,14 @@ test-unit:
 lint:
 	gofmt -l . | (! grep .) || (echo "gofmt needed on the files above" && exit 1)
 	go vet ./...
+
+# Build the Telegram Mini App into webapp/dist (served by the API at "/").
+webapp:
+	cd webapp && npm ci --no-audit --no-fund && npm run build
+
+# Mini App dev server on :5173, proxying /api and /uploads to the API on :8080.
+webapp-dev:
+	cd webapp && npm run dev
 
 # Start PostgreSQL in Docker and create the test database.
 db-up:
