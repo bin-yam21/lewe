@@ -28,26 +28,30 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // UserRow represents a user row from the database.
 type UserRow struct {
-	ID              pgtype.UUID
-	Email           string
-	PasswordHash    string
-	FullName        string
-	Phone           pgtype.Text
-	Location        pgtype.Text
-	Bio             pgtype.Text
-	AvatarURL       pgtype.Text
-	EmailVerifiedAt pgtype.Timestamptz
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	ID               pgtype.UUID
+	Email            string
+	PasswordHash     string
+	FullName         string
+	Phone            pgtype.Text
+	Location         pgtype.Text
+	Bio              pgtype.Text
+	AvatarURL        pgtype.Text
+	EmailVerifiedAt  pgtype.Timestamptz
+	TelegramID       pgtype.Int8
+	TelegramUsername pgtype.Text
+	City             pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
-const userColumns = `id, email, password_hash, full_name, phone, location, bio, avatar_url,
-	email_verified_at, created_at, updated_at`
+// Email and PasswordHash are empty for accounts created through Telegram.
+const userColumns = `id, COALESCE(email, ''), COALESCE(password_hash, ''), full_name, phone, location, bio,
+	avatar_url, email_verified_at, telegram_id, telegram_username, city, created_at, updated_at`
 
 func scanUser(row pgx.Row) (*UserRow, error) {
 	u := &UserRow{}
 	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.Phone, &u.Location, &u.Bio,
-		&u.AvatarURL, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
+		&u.AvatarURL, &u.EmailVerifiedAt, &u.TelegramID, &u.TelegramUsername, &u.City, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
@@ -82,13 +86,27 @@ func (r *Repository) GetByEmail(ctx context.Context, email string) (*UserRow, er
 }
 
 // Update modifies a user's profile fields.
-func (r *Repository) Update(ctx context.Context, id pgtype.UUID, fullName string, phone, location, bio, avatarURL *string) (*UserRow, error) {
+func (r *Repository) Update(ctx context.Context, id pgtype.UUID, req UpdateProfileRequest) (*UserRow, error) {
 	return scanUser(r.pool.QueryRow(ctx,
 		`UPDATE users
-		 SET full_name = $2, phone = $3, location = $4, bio = $5, avatar_url = $6, updated_at = now()
+		 SET full_name = $2, phone = $3, location = $4, bio = $5, avatar_url = $6, city = $7, updated_at = now()
 		 WHERE id = $1
 		 RETURNING `+userColumns,
-		id, fullName, phone, location, bio, avatarURL,
+		id, req.FullName, req.Phone, req.Location, req.Bio, req.AvatarURL, req.City,
+	))
+}
+
+// UpsertTelegram finds the account linked to a Telegram user, creating it on
+// first sign-in. The Telegram username is refreshed on every sign-in; the
+// name and photo are only used to fill in a new account.
+func (r *Repository) UpsertTelegram(ctx context.Context, telegramID int64, username, fullName, photoURL *string) (*UserRow, error) {
+	return scanUser(r.pool.QueryRow(ctx,
+		`INSERT INTO users (telegram_id, telegram_username, full_name, avatar_url)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (telegram_id) DO UPDATE
+		   SET telegram_username = EXCLUDED.telegram_username, updated_at = now()
+		 RETURNING `+userColumns,
+		telegramID, username, fullName, photoURL,
 	))
 }
 

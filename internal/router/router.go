@@ -2,6 +2,8 @@ package router
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/yeabt/lewe/internal/items"
 	"github.com/yeabt/lewe/internal/matches"
@@ -10,6 +12,7 @@ import (
 	"github.com/yeabt/lewe/internal/notifications"
 	"github.com/yeabt/lewe/internal/ratings"
 	"github.com/yeabt/lewe/internal/response"
+	"github.com/yeabt/lewe/internal/uploads"
 	"github.com/yeabt/lewe/internal/users"
 	"github.com/yeabt/lewe/internal/wants"
 )
@@ -23,6 +26,7 @@ type Handlers struct {
 	Ratings       *ratings.Handler
 	Messages      *messages.Handler
 	Notifications *notifications.Handler
+	Uploads       *uploads.Handler
 }
 
 // Options configures cross-cutting HTTP behaviour.
@@ -31,6 +35,8 @@ type Options struct {
 	AuthRateLimit int // requests per IP per minute on /auth routes; 0 disables
 	TrustProxy    bool
 	CORSOrigins   []string
+	// WebAppDir, if it holds a built Mini App (index.html), is served at "/".
+	WebAppDir string
 }
 
 // New creates and configures the HTTP router with all application routes.
@@ -52,6 +58,7 @@ func New(h Handlers, opts Options) http.Handler {
 	mux.Handle("POST /api/v1/auth/login", limited(h.Users.Login))
 	mux.Handle("POST /api/v1/auth/refresh", limited(h.Users.RefreshToken))
 	mux.Handle("POST /api/v1/auth/logout", limited(h.Users.Logout))
+	mux.Handle("POST /api/v1/auth/telegram", limited(h.Users.TelegramLogin))
 	mux.Handle("POST /api/v1/auth/verify-email", limited(h.Users.VerifyEmail))
 	mux.Handle("POST /api/v1/auth/forgot-password", limited(h.Users.ForgotPassword))
 	mux.Handle("POST /api/v1/auth/reset-password", limited(h.Users.ResetPassword))
@@ -99,6 +106,17 @@ func New(h Handlers, opts Options) http.Handler {
 	mux.Handle("GET /api/v1/notifications/unread-count", authed(h.Notifications.UnreadCount))
 	mux.Handle("POST /api/v1/notifications/read-all", authed(h.Notifications.MarkAllRead))
 	mux.Handle("POST /api/v1/notifications/{id}/read", authed(h.Notifications.MarkRead))
+
+	// --- Uploads ---
+	mux.Handle("POST /api/v1/uploads", authed(h.Uploads.Upload))
+	mux.HandleFunc("GET /uploads/{name}", h.Uploads.Serve)
+
+	// --- Telegram Mini App ---
+	if opts.WebAppDir != "" {
+		if _, err := os.Stat(filepath.Join(opts.WebAppDir, "index.html")); err == nil {
+			mux.Handle("GET /", spa(opts.WebAppDir))
+		}
+	}
 
 	// --- Health check ---
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

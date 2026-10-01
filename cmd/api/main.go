@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/yeabt/lewe/internal/config"
 	"github.com/yeabt/lewe/internal/db"
 	"github.com/yeabt/lewe/internal/mail"
+	"github.com/yeabt/lewe/internal/notifications"
+	"github.com/yeabt/lewe/internal/telegram"
 )
 
 func main() {
@@ -39,7 +42,26 @@ func main() {
 	}
 
 	// Wire up dependencies
-	a := app.New(pool, app.Config{
+	// Telegram: Mini App sign-in and notifications as chat messages
+	var sender notifications.Sender
+	if cfg.TelegramBotToken != "" {
+		bot := telegram.NewBot(cfg.TelegramBotToken, "")
+		sender = bot
+		// Telegram only opens Mini Apps over HTTPS.
+		if strings.HasPrefix(cfg.AppURL, "https://") {
+			menuCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := bot.SetMenuButton(menuCtx, "Open Lewe", cfg.AppURL); err != nil {
+				log.Printf("Could not set the bot's menu button: %v", err)
+			}
+			cancel()
+		} else {
+			log.Println("APP_URL is not https; the Telegram menu button was not set")
+		}
+	} else {
+		log.Println("TELEGRAM_BOT_TOKEN not set; Telegram sign-in and messages are disabled")
+	}
+
+	a, err := app.New(pool, app.Config{
 		JWTSecret:     cfg.JWTSecret,
 		MatchInterval: cfg.MatchInterval,
 		AuthRateLimit: cfg.AuthRateLimit,
@@ -47,7 +69,15 @@ func main() {
 		CORSOrigins:   cfg.CORSOrigins,
 		Mailer:        mailer,
 		AppURL:        cfg.AppURL,
+
+		TelegramBotToken: cfg.TelegramBotToken,
+		TelegramSender:   sender,
+		UploadDir:        cfg.UploadDir,
+		WebAppDir:        cfg.WebAppDir,
 	})
+	if err != nil {
+		log.Fatalf("Startup failed: %v", err)
+	}
 
 	// Cancelled on SIGINT / SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -60,6 +90,13 @@ func main() {
 		defer wg.Done()
 		a.Worker.Run(ctx)
 	}()
+	if a.Dispatcher != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.Dispatcher.Run(ctx)
+		}()
+	}
 
 	// Configure HTTP server
 	srv := &http.Server{

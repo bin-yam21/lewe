@@ -12,8 +12,9 @@ import (
 //
 // want_items lists every (want, item) pair where an available item owned by
 // someone else satisfies an active want: same category, at least the wanted
-// condition, and — if the want has keywords — at least one keyword appears in
-// the item's title or description.
+// condition, if the want has keywords at least one appears in the item's
+// title or description, and the two users are in the same city — unless the
+// want allows any city or either user hasn't set one.
 //
 // A swap exists when user A wants an item of user B's (ib) and user B wants an
 // item of user A's (ia). Every swap shows up twice (once from each side), so
@@ -32,6 +33,7 @@ WITH want_items AS (
     SELECT w.id AS want_id, w.user_id AS wanter_id,
            i.id AS item_id, i.owner_id, i.estimated_value
     FROM wants w
+    JOIN users wanter ON wanter.id = w.user_id
     JOIN items i
       ON i.category = w.category
      AND i.owner_id <> w.user_id
@@ -45,7 +47,9 @@ WITH want_items AS (
                  OR i.description ILIKE '%' || k.word || '%'
           )
      )
+    JOIN users owner ON owner.id = i.owner_id
     WHERE w.status = 'active'
+      AND (w.any_city OR wanter.city IS NULL OR owner.city IS NULL OR wanter.city = owner.city)
 ),
 inserted AS (
 INSERT INTO matches (user_a_id, item_a_id, want_a_id, user_b_id, item_b_id, want_b_id, score)

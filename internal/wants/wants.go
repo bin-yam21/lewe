@@ -38,6 +38,10 @@ type WantRequest struct {
 	Category     string   `json:"category"`
 	Keywords     []string `json:"keywords"`
 	MinCondition *string  `json:"min_condition"`
+	// AnyCity lets this want match items from users in other cities (for
+	// example when the user is happy to ship). By default matches stay in the
+	// user's own city.
+	AnyCity bool `json:"any_city"`
 }
 
 // WantResponse is the representation of a want returned to its owner.
@@ -46,6 +50,7 @@ type WantResponse struct {
 	Category     string    `json:"category"`
 	Keywords     []string  `json:"keywords"`
 	MinCondition *string   `json:"min_condition,omitempty"`
+	AnyCity      bool      `json:"any_city"`
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -60,16 +65,17 @@ type Row struct {
 	Category     string
 	Keywords     []string
 	MinCondition pgtype.Text
+	AnyCity      bool
 	Status       string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 }
 
-const wantColumns = `id, user_id, category, keywords, min_condition, status, created_at, updated_at`
+const wantColumns = `id, user_id, category, keywords, min_condition, any_city, status, created_at, updated_at`
 
 func scanWant(row pgx.Row) (*Row, error) {
 	w := &Row{}
-	err := row.Scan(&w.ID, &w.UserID, &w.Category, &w.Keywords, &w.MinCondition, &w.Status, &w.CreatedAt, &w.UpdatedAt)
+	err := row.Scan(&w.ID, &w.UserID, &w.Category, &w.Keywords, &w.MinCondition, &w.AnyCity, &w.Status, &w.CreatedAt, &w.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWantNotFound
@@ -92,10 +98,10 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // Create inserts a new active want.
 func (r *Repository) Create(ctx context.Context, userID pgtype.UUID, req WantRequest) (*Row, error) {
 	return scanWant(r.pool.QueryRow(ctx,
-		`INSERT INTO wants (user_id, category, keywords, min_condition)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO wants (user_id, category, keywords, min_condition, any_city)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING `+wantColumns,
-		userID, req.Category, req.Keywords, req.MinCondition,
+		userID, req.Category, req.Keywords, req.MinCondition, req.AnyCity,
 	))
 }
 
@@ -132,10 +138,10 @@ func (r *Repository) ListForUser(ctx context.Context, userID pgtype.UUID, status
 // Update replaces an active want's criteria.
 func (r *Repository) Update(ctx context.Context, id, userID pgtype.UUID, req WantRequest) (*Row, error) {
 	return scanWant(r.pool.QueryRow(ctx,
-		`UPDATE wants SET category = $3, keywords = $4, min_condition = $5, updated_at = now()
+		`UPDATE wants SET category = $3, keywords = $4, min_condition = $5, any_city = $6, updated_at = now()
 		 WHERE id = $1 AND user_id = $2 AND status = 'active'
 		 RETURNING `+wantColumns,
-		id, userID, req.Category, req.Keywords, req.MinCondition,
+		id, userID, req.Category, req.Keywords, req.MinCondition, req.AnyCity,
 	))
 }
 
@@ -302,6 +308,7 @@ func toResponse(w *Row) *WantResponse {
 		ID:        w.ID.String(),
 		Category:  w.Category,
 		Keywords:  w.Keywords,
+		AnyCity:   w.AnyCity,
 		Status:    w.Status,
 		CreatedAt: w.CreatedAt.Time,
 		UpdatedAt: w.UpdatedAt.Time,

@@ -29,6 +29,12 @@ type UpdateProfileRequest struct {
 	Location  *string `json:"location"`
 	Bio       *string `json:"bio"`
 	AvatarURL *string `json:"avatar_url"`
+	City      *string `json:"city"`
+}
+
+// TelegramAuthRequest carries Telegram.WebApp.initData from the Mini App.
+type TelegramAuthRequest struct {
+	InitData string `json:"init_data"`
 }
 
 // ChangePasswordRequest is the payload for changing a known password.
@@ -65,7 +71,7 @@ type AuthResponse struct {
 // UserResponse is the public-facing representation of a user.
 type UserResponse struct {
 	ID        string    `json:"id"`
-	Email     string    `json:"email"`
+	Email     string    `json:"email,omitempty"`
 	FullName  string    `json:"full_name"`
 	Phone     *string   `json:"phone,omitempty"`
 	Location  *string   `json:"location,omitempty"`
@@ -73,7 +79,9 @@ type UserResponse struct {
 	AvatarURL *string   `json:"avatar_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 
-	EmailVerified bool `json:"email_verified"`
+	EmailVerified    bool    `json:"email_verified"`
+	City             *string `json:"city,omitempty"`
+	TelegramUsername *string `json:"telegram_username,omitempty"`
 }
 
 // PublicProfileResponse is the representation of a user visible to anyone.
@@ -83,6 +91,7 @@ type PublicProfileResponse struct {
 	Location  *string       `json:"location,omitempty"`
 	Bio       *string       `json:"bio,omitempty"`
 	AvatarURL *string       `json:"avatar_url,omitempty"`
+	City      *string       `json:"city,omitempty"`
 	Rating    RatingSummary `json:"rating"`
 	CreatedAt time.Time     `json:"created_at"`
 }

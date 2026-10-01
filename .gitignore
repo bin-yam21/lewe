@@ -28,3 +28,10 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
+
+# Uploaded photos (local storage)
+/data/
+
+# Mini App
+webapp/node_modules/
+webapp/dist/

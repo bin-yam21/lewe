@@ -26,6 +26,8 @@ const (
 var (
 	ErrInvalidAccountToken = errors.New("invalid or expired link")
 	ErrAlreadyVerified     = errors.New("email already verified")
+	ErrNoEmail             = errors.New("account has no email address")
+	ErrNoPassword          = errors.New("account has no password")
 )
 
 // validatePassword applies the password rules used everywhere a password is set.
@@ -75,6 +77,9 @@ func (s *Service) ResendVerification(ctx context.Context, userID pgtype.UUID) er
 	}
 	if user.EmailVerifiedAt.Valid {
 		return ErrAlreadyVerified
+	}
+	if user.Email == "" {
+		return ErrNoEmail
 	}
 	return s.sendVerification(ctx, user)
 }
@@ -177,6 +182,9 @@ func (s *Service) ChangePassword(ctx context.Context, userID pgtype.UUID, req Ch
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if user.PasswordHash == "" {
+		return nil, ErrNoPassword
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)) != nil {
 		return nil, validator.Errors{"current_password": "is incorrect"}

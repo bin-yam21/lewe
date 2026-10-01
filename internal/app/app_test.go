@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +23,7 @@ import (
 	"github.com/yeabt/lewe/internal/app"
 	"github.com/yeabt/lewe/internal/db"
 	"github.com/yeabt/lewe/internal/mail"
+	"github.com/yeabt/lewe/internal/telegram"
 )
 
 // These end-to-end tests exercise the full HTTP API against a real
@@ -65,7 +71,13 @@ func setupWith(t *testing.T, cfg app.Config) *env {
 	}
 
 	cfg.JWTSecret, cfg.MatchInterval = testSecret, time.Hour
-	a := app.New(pool, cfg)
+	if cfg.UploadDir == "" {
+		cfg.UploadDir = t.TempDir()
+	}
+	a, err := app.New(pool, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(a.Handler)
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, app: a, pool: pool}
@@ -796,4 +808,243 @@ func TestEmailVerificationAndPasswordReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.must(400, "POST", "/api/v1/auth/reset-password", "", obj{"token": bobReset, "password": "whatever-123"})
+}
+
+const testBotToken = "123456:TEST-bot-token"
+
+// telegramInitData builds launch data signed the way Telegram signs it.
+func telegramInitData(id int64, first, username string) string {
+	v := url.Values{}
+	v.Set("auth_date", strconv.FormatInt(time.Now().Unix(), 10))
+	v.Set("user", fmt.Sprintf(`{"id":%d,"first_name":%q,"username":%q}`, id, first, username))
+	v.Set("hash", telegram.Sign(v, testBotToken))
+	return v.Encode()
+}
+
+type sentMessage struct {
+	chatID int64
+	text   string
+	button *telegram.WebAppButton
+}
+
+// fakeSender records Telegram messages; err makes every send fail.
+type fakeSender struct {
+	mu   sync.Mutex
+	sent []sentMessage
+	err  error
+}
+
+func (f *fakeSender) SendMessage(_ context.Context, chatID int64, text string, b *telegram.WebAppButton) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.sent = append(f.sent, sentMessage{chatID, text, b})
+	return nil
+}
+
+func (f *fakeSender) messages() []sentMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]sentMessage(nil), f.sent...)
+}
+
+func (e *env) telegramLogin(id int64, first, username string) user {
+	e.t.Helper()
+	out := e.must(200, "POST", "/api/v1/auth/telegram", "", obj{"init_data": telegramInitData(id, first, username)})
+	return user{id: out["user"].(obj)["id"].(string), token: out["access_token"].(string), refresh: out["refresh_token"].(string)}
+}
+
+func TestTelegramLogin(t *testing.T) {
+	// Disabled without a bot token.
+	plain := setup(t)
+	plain.must(404, "POST", "/api/v1/auth/telegram", "", obj{"init_data": telegramInitData(1, "A", "a")})
+
+	e := setupWith(t, app.Config{TelegramBotToken: testBotToken})
+	out := e.must(200, "POST", "/api/v1/auth/telegram", "", obj{"init_data": telegramInitData(777, "Selam", "selamt")})
+	u := out["user"].(obj)
+	if u["full_name"] != "Selam" || u["telegram_username"] != "selamt" {
+		t.Errorf("user = %v", u)
+	}
+	if _, hasEmail := u["email"]; hasEmail {
+		t.Errorf("telegram user should have no email: %v", u)
+	}
+
+	// Signing in again finds the same account and refreshes the username.
+	again := e.must(200, "POST", "/api/v1/auth/telegram", "", obj{"init_data": telegramInitData(777, "Selam T", "selam_new")})
+	if again["user"].(obj)["id"] != u["id"] || again["user"].(obj)["telegram_username"] != "selam_new" {
+		t.Errorf("second sign-in = %v", again["user"])
+	}
+	token := again["access_token"].(string)
+	e.must(200, "GET", "/api/v1/users/me", token, nil)
+
+	// Forged or stale data is rejected.
+	forged := strings.Replace(telegramInitData(777, "Selam", "selamt"), "777", "778", 1)
+	e.must(401, "POST", "/api/v1/auth/telegram", "", obj{"init_data": forged})
+	e.must(401, "POST", "/api/v1/auth/telegram", "", obj{"init_data": ""})
+	stale := url.Values{}
+	stale.Set("auth_date", strconv.FormatInt(time.Now().Add(-48*time.Hour).Unix(), 10))
+	stale.Set("user", `{"id":777,"first_name":"Selam"}`)
+	stale.Set("hash", telegram.Sign(stale, testBotToken))
+	e.must(401, "POST", "/api/v1/auth/telegram", "", obj{"init_data": stale.Encode()})
+
+	// Password and email features don't apply to Telegram-only accounts.
+	e.must(409, "PUT", "/api/v1/users/me/password", token, obj{"current_password": "whatever1", "new_password": "whatever2"})
+	e.must(409, "POST", "/api/v1/users/me/verify-email", token, nil)
+}
+
+func TestTelegramNotificationDelivery(t *testing.T) {
+	sender := &fakeSender{}
+	e := setupWith(t, app.Config{TelegramBotToken: testBotToken, TelegramSender: sender, AppURL: "https://app.test/"})
+	if e.app.Dispatcher == nil {
+		t.Fatal("dispatcher should be configured")
+	}
+
+	selam := e.telegramLogin(101, "Selam", "selam")
+	dawit := e.telegramLogin(202, "Dawit", "dawit")
+	e.register("Mail") // an email-only user: nothing to send them
+
+	e.item(selam, "Canon camera", "electronics", "good", 300)
+	e.item(dawit, "Krar", "music", "good", 250)
+	e.want(selam, "music", nil, nil)
+	e.want(dawit, "electronics", nil, nil)
+	if n := e.match(); n != 1 {
+		t.Fatalf("matches = %d", n)
+	}
+	matchID := e.matches(selam, "")[0].(obj)["id"].(string)
+
+	n, err := e.app.Dispatcher.RunOnce(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("RunOnce = %d, %v; want 2 sent", n, err)
+	}
+	got := sender.messages()
+	chats := map[int64]bool{}
+	for _, m := range got {
+		chats[m.chatID] = true
+		if !strings.Contains(m.text, "found a new swap") || m.button == nil ||
+			m.button.URL != "https://app.test/#/matches/"+matchID {
+			t.Errorf("message = %+v", m)
+		}
+	}
+	if !chats[101] || !chats[202] {
+		t.Errorf("chats = %v", chats)
+	}
+	if n, _ := e.app.Dispatcher.RunOnce(context.Background()); n != 0 {
+		t.Errorf("second pass sent %d, want 0", n)
+	}
+
+	// A failing Telegram keeps notifications pending until it recovers.
+	sender.err = fmt.Errorf("telegram is down")
+	e.must(201, "POST", "/api/v1/matches/"+matchID+"/messages", selam.token, obj{"body": "Hi Dawit"})
+	if n, _ := e.app.Dispatcher.RunOnce(context.Background()); n != 0 {
+		t.Errorf("sent %d while failing", n)
+	}
+	sender.err = nil
+	if n, _ := e.app.Dispatcher.RunOnce(context.Background()); n != 1 {
+		t.Errorf("after recovery sent %d, want 1", n)
+	}
+	if last := sender.messages()[len(sender.messages())-1]; last.chatID != 202 || !strings.Contains(last.text, "new message") {
+		t.Errorf("last = %+v", last)
+	}
+
+	// Users who blocked the bot don't block the queue.
+	sender.err = telegram.ErrBlocked
+	e.must(201, "POST", "/api/v1/matches/"+matchID+"/messages", dawit.token, obj{"body": "Hello"})
+	e.app.Dispatcher.RunOnce(context.Background())
+	var pending int
+	e.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM notifications WHERE delivered_at IS NULL`).Scan(&pending)
+	if pending != 0 {
+		t.Errorf("pending = %d, want 0", pending)
+	}
+}
+
+func pngImage() []byte {
+	// A valid 1x1 PNG.
+	return []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82")
+}
+
+func TestUploadsAndCityMatching(t *testing.T) {
+	e := setup(t)
+	alice, bob := e.register("Alice"), e.register("Bob")
+
+	// Upload a photo and use it on a listing.
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "photo.png")
+	fw.Write(pngImage())
+	mw.Close()
+	req, _ := http.NewRequest("POST", e.srv.URL+"/api/v1/uploads", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+alice.token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var up obj
+	json.NewDecoder(resp.Body).Decode(&up)
+	resp.Body.Close()
+	if resp.StatusCode != 201 {
+		t.Fatalf("upload: %d %v", resp.StatusCode, up)
+	}
+	photo := up["url"].(string)
+
+	item := e.must(201, "POST", "/api/v1/items", alice.token, obj{
+		"title": "Bike", "category": "sports", "condition": "good", "image_urls": []string{photo},
+	})
+	if item["image_urls"].([]any)[0] != photo {
+		t.Errorf("item = %v", item)
+	}
+	img, err := http.Get(e.srv.URL + photo)
+	if err != nil || img.StatusCode != 200 || img.Header.Get("Content-Type") != "image/png" {
+		t.Errorf("GET photo: %v %v", err, img)
+	}
+	img.Body.Close()
+	e.must(422, "POST", "/api/v1/items", alice.token, obj{
+		"title": "x", "category": "sports", "condition": "good", "image_urls": []string{"/uploads/../../etc/passwd"},
+	})
+	e.must(401, "POST", "/api/v1/uploads", "", nil)
+
+	// Profiles take a city from the fixed list.
+	e.must(422, "PUT", "/api/v1/users/me", alice.token, obj{"full_name": "Alice", "city": "Atlantis"})
+	me := e.must(200, "PUT", "/api/v1/users/me", alice.token, obj{"full_name": "Alice", "city": "Addis Ababa", "avatar_url": photo})
+	if me["city"] != "Addis Ababa" || me["avatar_url"] != photo {
+		t.Errorf("profile = %v", me)
+	}
+	e.must(200, "PUT", "/api/v1/users/me", bob.token, obj{"full_name": "Bob", "city": "Hawassa"})
+	if cities := e.must(200, "GET", "/api/v1/categories", "", nil)["cities"].([]any); len(cities) == 0 {
+		t.Error("expected cities")
+	}
+
+	// Different cities: no match unless both wants allow any city.
+	e.item(bob, "Tent", "sports", "good", 0)
+	aliceWant := e.want(alice, "sports", []string{"tent"}, nil)
+	bobWant := e.want(bob, "sports", []string{"bike"}, nil)
+	if n := e.match(); n != 0 {
+		t.Fatalf("cross-city match created: %d", n)
+	}
+	e.must(200, "PUT", "/api/v1/wants/"+aliceWant, alice.token, obj{"category": "sports", "keywords": []string{"tent"}, "any_city": true})
+	if n := e.match(); n != 0 {
+		t.Fatalf("one-sided any_city should not match: %d", n)
+	}
+	got := e.must(200, "PUT", "/api/v1/wants/"+bobWant, bob.token, obj{"category": "sports", "keywords": []string{"bike"}, "any_city": true})
+	if got["any_city"] != true {
+		t.Errorf("want = %v", got)
+	}
+	if n := e.match(); n != 1 {
+		t.Fatalf("both any_city: %d matches, want 1", n)
+	}
+
+	// Same city matches by default.
+	carol, dan := e.register("Carol"), e.register("Dan")
+	for _, u := range []user{carol, dan} {
+		e.must(200, "PUT", "/api/v1/users/me", u.token, obj{"full_name": "X", "city": "Bahir Dar"})
+	}
+	e.item(carol, "Chess set", "toys", "good", 0)
+	e.item(dan, "Lego box", "toys", "good", 0)
+	e.want(carol, "toys", []string{"lego"}, nil)
+	e.want(dan, "toys", []string{"chess"}, nil)
+	if n := e.match(); n != 1 {
+		t.Fatalf("same city: %d matches, want 1", n)
+	}
 }

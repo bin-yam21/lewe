@@ -3,7 +3,6 @@ package items
 import (
 	"context"
 	"errors"
-	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -169,9 +168,8 @@ func validate(req ItemRequest) validator.Errors {
 		errs["image_urls"] = "must contain at most 10 images"
 	}
 	for _, u := range req.ImageURLs {
-		parsed, err := url.ParseRequestURI(u)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-			errs["image_urls"] = "must contain valid http(s) URLs"
+		if !validator.IsImageURL(u) {
+			errs["image_urls"] = "must contain http(s) URLs or uploaded images"
 			break
 		}
 	}

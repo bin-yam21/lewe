@@ -2,6 +2,7 @@ package validator
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -72,4 +73,17 @@ func ValidateRange(errs Errors, field string, value, lo, hi int) {
 	if value < lo || value > hi {
 		errs[field] = fmt.Sprintf("must be between %d and %d", lo, hi)
 	}
+}
+
+// uploadedImagePath matches paths returned by POST /api/v1/uploads.
+var uploadedImagePath = regexp.MustCompile(`^/uploads/[0-9a-f]{32}\.(jpg|png|webp)$`)
+
+// IsImageURL reports whether s is an absolute http(s) URL or the path of an
+// image uploaded to this server.
+func IsImageURL(s string) bool {
+	if uploadedImagePath.MatchString(s) {
+		return true
+	}
+	u, err := url.ParseRequestURI(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }

@@ -29,6 +29,7 @@ func (h *Handler) Categories(w http.ResponseWriter, r *http.Request) {
 		"categories":       catalog.Categories,
 		"conditions":       catalog.Conditions,
 		"exchange_methods": catalog.ExchangeMethods,
+		"cities":           catalog.Cities,
 	})
 }
 

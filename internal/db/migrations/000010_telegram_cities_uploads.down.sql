@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS idx_notifications_undelivered;
+ALTER TABLE notifications DROP COLUMN IF EXISTS delivered_at;
+ALTER TABLE wants DROP COLUMN IF EXISTS any_city;
+ALTER TABLE users DROP COLUMN IF EXISTS city;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_has_login;
+DELETE FROM users WHERE email IS NULL;
+ALTER TABLE users DROP COLUMN IF EXISTS telegram_username;
+ALTER TABLE users DROP COLUMN IF EXISTS telegram_id;
+ALTER TABLE users ALTER COLUMN password_hash SET NOT NULL;
+ALTER TABLE users ALTER COLUMN email SET NOT NULL;

@@ -14,14 +14,17 @@ import (
 	"github.com/yeabt/lewe/internal/notifications"
 	"github.com/yeabt/lewe/internal/ratings"
 	"github.com/yeabt/lewe/internal/router"
+	"github.com/yeabt/lewe/internal/uploads"
 	"github.com/yeabt/lewe/internal/users"
 	"github.com/yeabt/lewe/internal/wants"
 )
 
-// App bundles the HTTP handler and the background matching worker.
+// App bundles the HTTP handler and the background workers.
 type App struct {
 	Handler http.Handler
 	Worker  *matches.Worker
+	// Dispatcher is nil unless a TelegramSender is configured.
+	Dispatcher *notifications.Dispatcher
 }
 
 // Config holds the settings the application needs beyond a database pool.
@@ -32,18 +35,36 @@ type Config struct {
 	TrustProxy    bool
 	CORSOrigins   []string
 	Mailer        mail.Mailer // nil logs emails instead of sending them
-	AppURL        string      // base URL for links in emails
+	AppURL        string      // base URL of the client app (links in emails and Telegram messages)
+
+	// TelegramBotToken enables Mini App sign-in.
+	TelegramBotToken string
+	// TelegramSender, when set, delivers notifications as Telegram messages.
+	TelegramSender notifications.Sender
+	// UploadDir is where uploaded photos are stored.
+	UploadDir string
+	// WebAppDir holds the built Mini App, served at "/" when present.
+	WebAppDir string
 }
 
 // New builds the application: repo → service → handler for each domain.
-func New(pool *pgxpool.Pool, cfg Config) *App {
+func New(pool *pgxpool.Pool, cfg Config) (*App, error) {
 	worker := matches.NewWorker(pool, cfg.MatchInterval)
 
 	userSvc := users.NewService(users.NewRepository(pool), users.NewRefreshTokenRepository(pool), users.Options{
-		JWTSecret: cfg.JWTSecret,
-		Mailer:    cfg.Mailer,
-		AppURL:    cfg.AppURL,
+		JWTSecret:        cfg.JWTSecret,
+		Mailer:           cfg.Mailer,
+		AppURL:           cfg.AppURL,
+		TelegramBotToken: cfg.TelegramBotToken,
 	})
+
+	if cfg.UploadDir == "" {
+		cfg.UploadDir = "data/uploads"
+	}
+	store, err := uploads.NewStore(cfg.UploadDir)
+	if err != nil {
+		return nil, err
+	}
 	itemSvc := items.NewService(items.NewRepository(pool), worker.Trigger)
 	wantSvc := wants.NewService(wants.NewRepository(pool), worker.Trigger)
 	matchSvc := matches.NewService(matches.NewRepository(pool))
@@ -57,12 +78,18 @@ func New(pool *pgxpool.Pool, cfg Config) *App {
 		Ratings:       ratings.NewHandler(ratingSvc),
 		Messages:      messages.NewHandler(messages.NewService(pool)),
 		Notifications: notifications.NewHandler(notifications.NewService(pool)),
+		Uploads:       uploads.NewHandler(store),
 	}, router.Options{
 		JWTSecret:     cfg.JWTSecret,
 		AuthRateLimit: cfg.AuthRateLimit,
 		TrustProxy:    cfg.TrustProxy,
 		CORSOrigins:   cfg.CORSOrigins,
+		WebAppDir:     cfg.WebAppDir,
 	})
 
-	return &App{Handler: handler, Worker: worker}
+	a := &App{Handler: handler, Worker: worker}
+	if cfg.TelegramSender != nil {
+		a.Dispatcher = notifications.NewDispatcher(pool, cfg.TelegramSender, cfg.AppURL, 5*time.Second)
+	}
+	return a, nil
 }

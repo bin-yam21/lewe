@@ -7,6 +7,7 @@ import (
 	"github.com/yeabt/lewe/internal/middleware"
 	"github.com/yeabt/lewe/internal/request"
 	"github.com/yeabt/lewe/internal/response"
+	"github.com/yeabt/lewe/internal/telegram"
 	"github.com/yeabt/lewe/internal/validator"
 )
 
@@ -84,6 +85,21 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// TelegramLogin handles POST /api/v1/auth/telegram
+func (h *Handler) TelegramLogin(w http.ResponseWriter, r *http.Request) {
+	var req TelegramAuthRequest
+	if err := request.DecodeJSON(w, r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	authResp, err := h.svc.TelegramLogin(r.Context(), req.InitData)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, authResp)
 }
 
 // VerifyEmail handles POST /api/v1/auth/verify-email
@@ -231,6 +247,14 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusBadRequest, "This link is invalid or has expired")
 	case errors.Is(err, ErrAlreadyVerified):
 		response.Error(w, http.StatusConflict, "Email is already verified")
+	case errors.Is(err, ErrNoEmail):
+		response.Error(w, http.StatusConflict, "This account has no email address")
+	case errors.Is(err, ErrNoPassword):
+		response.Error(w, http.StatusConflict, "This account signs in with Telegram and has no password")
+	case errors.Is(err, ErrTelegramDisabled):
+		response.Error(w, http.StatusNotFound, "Telegram sign-in is not enabled")
+	case errors.Is(err, telegram.ErrInvalidInitData), errors.Is(err, telegram.ErrExpiredInitData):
+		response.Error(w, http.StatusUnauthorized, "Telegram sign-in data is invalid or expired; reopen the app")
 	case errors.Is(err, ErrUserNotFound):
 		response.Error(w, http.StatusNotFound, "User not found")
 	default:

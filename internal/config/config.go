@@ -29,6 +29,12 @@ type Config struct {
 	AppURL string
 	// SMTP is used to send email when SMTP.Host is set; otherwise emails are logged.
 	SMTP mail.SMTPConfig
+	// TelegramBotToken (from @BotFather) enables Mini App sign-in and
+	// notifications delivered as Telegram messages.
+	TelegramBotToken string
+	// UploadDir stores uploaded photos; WebAppDir holds the built Mini App.
+	UploadDir string
+	WebAppDir string
 }
 
 // Load reads configuration from environment variables.
@@ -39,13 +45,16 @@ func Load() Config {
 	_ = godotenv.Load()
 
 	cfg := Config{
-		DatabaseURL:   getEnv("DATABASE_URL", ""),
-		JWTSecret:     getEnv("JWT_SECRET", ""),
-		Port:          getEnv("PORT", ":8080"),
-		MatchInterval: time.Minute,
-		AuthRateLimit: 20,
-		TrustProxy:    os.Getenv("TRUST_PROXY") == "true",
-		AppURL:        getEnv("APP_URL", "http://localhost:3000"),
+		DatabaseURL:      getEnv("DATABASE_URL", ""),
+		JWTSecret:        getEnv("JWT_SECRET", ""),
+		Port:             getEnv("PORT", ":8080"),
+		MatchInterval:    time.Minute,
+		AuthRateLimit:    20,
+		TrustProxy:       os.Getenv("TRUST_PROXY") == "true",
+		AppURL:           getEnv("APP_URL", "http://localhost:8080"),
+		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
+		UploadDir:        getEnv("UPLOAD_DIR", "data/uploads"),
+		WebAppDir:        getEnv("WEBAPP_DIR", "webapp/dist"),
 		SMTP: mail.SMTPConfig{
 			Host:     os.Getenv("SMTP_HOST"),
 			Port:     587,

@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/yeabt/lewe/internal/auth"
+	"github.com/yeabt/lewe/internal/catalog"
 	"github.com/yeabt/lewe/internal/mail"
 	"github.com/yeabt/lewe/internal/validator"
 )
@@ -30,6 +31,7 @@ type Service struct {
 	jwtSecret string
 	mailer    mail.Mailer
 	appURL    string
+	botToken  string
 }
 
 // Options configures the user service.
@@ -40,6 +42,8 @@ type Options struct {
 	// AppURL is the base URL of the client app; emailed links point at
 	// {AppURL}/verify-email?token=… and {AppURL}/reset-password?token=….
 	AppURL string
+	// TelegramBotToken enables sign-in from the Telegram Mini App.
+	TelegramBotToken string
 }
 
 // NewService creates a new user service.
@@ -53,6 +57,7 @@ func NewService(repo *Repository, tokenRepo *RefreshTokenRepository, opts Option
 		jwtSecret: opts.JWTSecret,
 		mailer:    opts.Mailer,
 		appURL:    strings.TrimRight(opts.AppURL, "/"),
+		botToken:  opts.TelegramBotToken,
 	}
 }
 
@@ -114,7 +119,10 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*AuthResponse, e
 		return nil, err
 	}
 
-	// Verify password
+	// Verify password (Telegram-only accounts have none)
+	if user.PasswordHash == "" {
+		return nil, ErrInvalidCredentials
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -176,6 +184,7 @@ func (s *Service) GetPublicProfile(ctx context.Context, userID pgtype.UUID) (*Pu
 		Location:  full.Location,
 		Bio:       full.Bio,
 		AvatarURL: full.AvatarURL,
+		City:      full.City,
 		Rating:    RatingSummary{Average: math.Round(avg*100) / 100, Count: count},
 		CreatedAt: full.CreatedAt,
 	}, nil
@@ -202,11 +211,19 @@ func (s *Service) UpdateProfile(ctx context.Context, userID pgtype.UUID, req Upd
 	if req.Bio != nil {
 		validator.ValidateMaxLength(errs, "bio", *req.Bio, 2000)
 	}
+	req.City = trimmedOrNil(req.City)
+	if req.City != nil {
+		validator.ValidateOneOf(errs, "city", *req.City, catalog.Cities)
+	}
+	req.AvatarURL = trimmedOrNil(req.AvatarURL)
+	if req.AvatarURL != nil && !validator.IsImageURL(*req.AvatarURL) {
+		errs["avatar_url"] = "must be an http(s) URL or an uploaded image"
+	}
 	if errs.HasErrors() {
 		return nil, errs
 	}
 
-	user, err := s.repo.Update(ctx, userID, req.FullName, req.Phone, req.Location, req.Bio, req.AvatarURL)
+	user, err := s.repo.Update(ctx, userID, req)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +286,25 @@ func toUserResponse(u *UserRow) UserResponse {
 	if u.AvatarURL.Valid {
 		resp.AvatarURL = &u.AvatarURL.String
 	}
+	if u.City.Valid {
+		resp.City = &u.City.String
+	}
+	if u.TelegramUsername.Valid {
+		resp.TelegramUsername = &u.TelegramUsername.String
+	}
 	return resp
+}
+
+// trimmedOrNil trims s and turns an empty result into nil.
+func trimmedOrNil(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	t := strings.TrimSpace(*s)
+	if t == "" {
+		return nil
+	}
+	return &t
 }
 
 // normalizeEmail lower-cases and trims an email so lookups are case-insensitive.
