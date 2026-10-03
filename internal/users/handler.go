@@ -54,6 +54,23 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, authResp)
 }
 
+// TelegramLogin handles POST /api/v1/auth/telegram
+func (h *Handler) TelegramLogin(w http.ResponseWriter, r *http.Request) {
+	var req TelegramRequest
+	if err := request.DecodeJSON(w, r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	authResp, err := h.svc.TelegramLogin(r.Context(), req.InitData)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	response.JSON(w, http.StatusOK, authResp)
+}
+
 // RefreshToken handles POST /api/v1/auth/refresh
 func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
@@ -223,6 +240,10 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrEmailTaken):
 		response.Error(w, http.StatusConflict, "Email already registered")
+	case errors.Is(err, ErrTelegramDisabled):
+		response.Error(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrInvalidTelegramData):
+		response.Error(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, ErrInvalidCredentials):
 		response.Error(w, http.StatusUnauthorized, "Invalid email or password")
 	case errors.Is(err, ErrInvalidRefreshToken):

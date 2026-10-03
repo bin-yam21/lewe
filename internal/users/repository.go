@@ -71,6 +71,27 @@ func (r *Repository) Create(ctx context.Context, email, passwordHash, fullName s
 	return user, err
 }
 
+// GetByTelegramID retrieves a user by their linked Telegram account.
+func (r *Repository) GetByTelegramID(ctx context.Context, telegramID int64) (*UserRow, error) {
+	return scanUser(r.pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE telegram_id = $1`, telegramID))
+}
+
+// CreateTelegram inserts a user created from Telegram login. Telegram has
+// already identified them, so there is no email to verify.
+func (r *Repository) CreateTelegram(ctx context.Context, telegramID int64, email, passwordHash, fullName string) (*UserRow, error) {
+	user, err := scanUser(r.pool.QueryRow(ctx,
+		`INSERT INTO users (telegram_id, email, password_hash, full_name)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (telegram_id) DO UPDATE SET telegram_id = EXCLUDED.telegram_id
+		 RETURNING `+userColumns,
+		telegramID, email, passwordHash, fullName,
+	))
+	if err != nil && db.IsUniqueViolation(err) {
+		return nil, ErrEmailTaken
+	}
+	return user, err
+}
+
 // GetByID retrieves a user by their UUID.
 func (r *Repository) GetByID(ctx context.Context, id pgtype.UUID) (*UserRow, error) {
 	return scanUser(r.pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id))

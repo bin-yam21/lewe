@@ -47,6 +47,8 @@ func main() {
 		CORSOrigins:   cfg.CORSOrigins,
 		Mailer:        mailer,
 		AppURL:        cfg.AppURL,
+
+		TelegramBotToken: cfg.TelegramBotToken,
 	})
 
 	// Cancelled on SIGINT / SIGTERM
