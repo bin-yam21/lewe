@@ -238,3 +238,15 @@ token_hash (unique), expires_at, used_at.
 - Real-time delivery (WebSocket/SSE); clients poll `/notifications/unread-count`
 - Multi-party (A→B→C→A) swap cycles; matching is two-way only
 - The sqlc query files still cover only users and refresh tokens; repositories use pgx directly
+
+## Telegram Mini App
+
+- **`POST /auth/telegram`**: validates Telegram `initData` (HMAC-SHA256 keyed by
+  the bot token, 24h max age) and signs in or creates the linked user
+  (`users.telegram_id`, migration 000010). Enabled by `TELEGRAM_BOT_TOKEN`;
+  otherwise returns 501. Telegram-created accounts get a placeholder
+  `tg<id>@telegram.invalid` email and an unusable random password.
+- **`web/`**: React + TypeScript + Vite client with browse, items, wants,
+  matches (accept/decline, exchange, confirm, cancel, chat, rating),
+  notifications and profiles. Verified end to end in headless Chromium against
+  the real API with signed Telegram launch data.

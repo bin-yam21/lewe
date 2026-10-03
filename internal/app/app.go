@@ -26,13 +26,14 @@ type App struct {
 
 // Config holds the settings the application needs beyond a database pool.
 type Config struct {
-	JWTSecret     string
-	MatchInterval time.Duration
-	AuthRateLimit int // per client IP per minute; 0 disables
-	TrustProxy    bool
-	CORSOrigins   []string
-	Mailer        mail.Mailer // nil logs emails instead of sending them
-	AppURL        string      // base URL for links in emails
+	JWTSecret        string
+	MatchInterval    time.Duration
+	AuthRateLimit    int // per client IP per minute; 0 disables
+	TrustProxy       bool
+	CORSOrigins      []string
+	Mailer           mail.Mailer // nil logs emails instead of sending them
+	AppURL           string      // base URL for links in emails
+	TelegramBotToken string      // enables /auth/telegram when set
 }
 
 // New builds the application: repo → service → handler for each domain.
@@ -43,6 +44,8 @@ func New(pool *pgxpool.Pool, cfg Config) *App {
 		JWTSecret: cfg.JWTSecret,
 		Mailer:    cfg.Mailer,
 		AppURL:    cfg.AppURL,
+
+		TelegramBotToken: cfg.TelegramBotToken,
 	})
 	itemSvc := items.NewService(items.NewRepository(pool), worker.Trigger)
 	wantSvc := wants.NewService(wants.NewRepository(pool), worker.Trigger)

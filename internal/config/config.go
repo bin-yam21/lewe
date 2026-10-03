@@ -27,6 +27,8 @@ type Config struct {
 	CORSOrigins []string
 	// AppURL is the client app's base URL, used for links in emails.
 	AppURL string
+	// TelegramBotToken enables Telegram Mini App login when set.
+	TelegramBotToken string
 	// SMTP is used to send email when SMTP.Host is set; otherwise emails are logged.
 	SMTP mail.SMTPConfig
 }
@@ -46,6 +48,8 @@ func Load() Config {
 		AuthRateLimit: 20,
 		TrustProxy:    os.Getenv("TRUST_PROXY") == "true",
 		AppURL:        getEnv("APP_URL", "http://localhost:3000"),
+
+		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		SMTP: mail.SMTPConfig{
 			Host:     os.Getenv("SMTP_HOST"),
 			Port:     587,

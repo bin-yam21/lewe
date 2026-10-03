@@ -30,6 +30,8 @@ type Service struct {
 	jwtSecret string
 	mailer    mail.Mailer
 	appURL    string
+
+	telegramBotToken string
 }
 
 // Options configures the user service.
@@ -40,6 +42,8 @@ type Options struct {
 	// AppURL is the base URL of the client app; emailed links point at
 	// {AppURL}/verify-email?token=… and {AppURL}/reset-password?token=….
 	AppURL string
+	// TelegramBotToken enables POST /auth/telegram for Telegram Mini Apps.
+	TelegramBotToken string
 }
 
 // NewService creates a new user service.
@@ -53,6 +57,8 @@ func NewService(repo *Repository, tokenRepo *RefreshTokenRepository, opts Option
 		jwtSecret: opts.JWTSecret,
 		mailer:    opts.Mailer,
 		appURL:    strings.TrimRight(opts.AppURL, "/"),
+
+		telegramBotToken: opts.TelegramBotToken,
 	}
 }
 

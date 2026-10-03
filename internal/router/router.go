@@ -50,6 +50,7 @@ func New(h Handlers, opts Options) http.Handler {
 	// --- Public auth routes ---
 	mux.Handle("POST /api/v1/auth/register", limited(h.Users.Register))
 	mux.Handle("POST /api/v1/auth/login", limited(h.Users.Login))
+	mux.Handle("POST /api/v1/auth/telegram", limited(h.Users.TelegramLogin))
 	mux.Handle("POST /api/v1/auth/refresh", limited(h.Users.RefreshToken))
 	mux.Handle("POST /api/v1/auth/logout", limited(h.Users.Logout))
 	mux.Handle("POST /api/v1/auth/verify-email", limited(h.Users.VerifyEmail))
