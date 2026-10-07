@@ -23,11 +23,21 @@ services:
       PORT: ":8080"
       MATCH_INTERVAL: 30s
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TRUST_PROXY: "true"
     ports:
       - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
+
+  # Telegram Mini App: static build + reverse proxy to the API (same origin).
+  web:
+    build: ./web
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
 
 volumes:
   pgdata:
